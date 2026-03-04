@@ -167,15 +167,16 @@ col_input, col_compare = st.columns([3, 1])
 
 with col_input:
     raw_text = st.text_area(
-        "📋 Adresai (vienas per eilutę)",
+        "📋 Adresai – po vieną per eilutę **arba** visa eilutė iš Excel (Tab atskirti)",
         height=220,
         placeholder=(
+            "Variantas 1 – po vieną per eilutę:\n"
             "Hamburg, Germany\n"
-            "Moerasstraatje 20, B-9750 Zingem\n"
-            "36 Rue du Commerce, F-51350 Cormontreuil\n"
-            "F-51530 Dizy\n"
-            "F-95460 Ezanville\n"
-            "F-95520 Osny"
+            "B-9750 Zingem\n"
+            "F-51350 Cormontreuil\n"
+            "F-95520 Osny\n\n"
+            "Variantas 2 – visa Excel eilutė (Ctrl+C → Ctrl+V):\n"
+            "Hamburg, Germany\tB-9750 Zingem\tF-51350 Cormontreuil\tF-95520 Osny"
         ),
     )
 
@@ -192,8 +193,30 @@ with col_compare:
 
 st.divider()
 
+def parse_addresses(text: str) -> list:
+    """
+    Supranta abu formatus:
+    1. Vienas adresas per eilutę (Enter)
+    2. Visi adresai vienoje eilutėje, Tab atskirti (copy-paste iš Excel eilutės)
+    """
+    lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
+    if not lines:
+        return []
+    # Jei yra tik viena eilutė ir joje yra Tab – Excel formatas
+    if len(lines) == 1 and "\t" in lines[0]:
+        return [a.strip() for a in lines[0].split("\t") if a.strip()]
+    # Jei kelios eilutės, bet pirmoje yra Tab – kiekviena eilutė gali būti Tab-atskirta
+    addresses = []
+    for line in lines:
+        if "\t" in line:
+            addresses.extend([a.strip() for a in line.split("\t") if a.strip()])
+        else:
+            addresses.append(line)
+    return addresses
+
+
 if calculate and raw_text.strip():
-    addresses = [line.strip() for line in raw_text.strip().splitlines() if line.strip()]
+    addresses = parse_addresses(raw_text)
 
     if len(addresses) < 2:
         st.warning("Reikia bent 2 adresų.")
