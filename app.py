@@ -225,6 +225,21 @@ def arrow_layer(path_coords, step=10):
     )
 
 
+def _safe(text: str) -> str:
+    """Pakeičia simbolius, kurių nepalaiko Helvetica šriftas."""
+    return (str(text)
+            .replace("—", "-")
+            .replace("–", "-")
+            .replace("€", "EUR")
+            .replace("📏", "")
+            .replace("⏱️", "")
+            .replace("💰", "")
+            .replace("📄", "")
+            .replace("📐", "")
+            .encode("latin-1", errors="replace")
+            .decode("latin-1"))
+
+
 def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, total_cost,
                  client_km, full_route_min) -> bytes:
     """Generuoja PDF ataskaitą ir grąžina bytes."""
@@ -278,9 +293,9 @@ def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, total_cost,
 
     for label, value in summary_items:
         pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(60, 6, label)
+        pdf.cell(60, 6, _safe(label))
         pdf.set_font("Helvetica", "", 9)
-        pdf.cell(0, 6, value, new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, _safe(value), new_x="LMARGIN", new_y="NEXT")
 
     pdf.ln(4)
 
@@ -305,11 +320,11 @@ def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, total_cost,
         addr, coord = valid_pairs[idx] if idx < len(valid_pairs) else ("", None)
         coord_str = f"{coord[0]:.4f}, {coord[1]:.4f}" if coord else "-"
         pdf.set_fill_color(245, 249, 255) if fill else pdf.set_fill_color(255, 255, 255)
-        pdf.cell(col_w[0], 5.5, str(row["Nr."]), border=1, fill=fill, align="C")
-        pdf.cell(col_w[1], 5.5, str(row["Adresas"])[:50], border=1, fill=fill)
-        pdf.cell(col_w[2], 5.5, coord_str, border=1, fill=fill, align="C")
-        pdf.cell(col_w[3], 5.5, str(row["Iki sekančio (km)"]), border=1, fill=fill, align="C")
-        pdf.cell(col_w[4], 5.5, str(row["Kaupiamasis (km)"]), border=1, fill=fill, align="C")
+        pdf.cell(col_w[0], 5.5, _safe(row["Nr."]), border=1, fill=fill, align="C")
+        pdf.cell(col_w[1], 5.5, _safe(row["Adresas"])[:50], border=1, fill=fill)
+        pdf.cell(col_w[2], 5.5, _safe(coord_str), border=1, fill=fill, align="C")
+        pdf.cell(col_w[3], 5.5, _safe(row["Iki sekančio (km)"]), border=1, fill=fill, align="C")
+        pdf.cell(col_w[4], 5.5, _safe(row["Kaupiamasis (km)"]), border=1, fill=fill, align="C")
         pdf.ln()
         fill = not fill
 
@@ -345,10 +360,10 @@ def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, total_cost,
                 .replace("🇦🇹","AT").replace("🇨🇭","CH").replace("🇱🇹","LT").replace("🇱🇻","LV") \
                 .replace("🇪🇪","EE").replace("🇸🇪","SE").replace("🇳🇴","NO").replace("🇬🇧","GB") \
                 .encode("ascii","ignore").decode()
-        pdf.cell(cc_col_w[0], 5.5, label, border=1, fill=True, align="C")
-        pdf.cell(cc_col_w[1], 5.5, str(row["KM"]).replace("**",""), border=1, fill=True, align="C")
-        pdf.cell(cc_col_w[2], 5.5, str(row["Kaina €/km"]), border=1, fill=True, align="C")
-        pdf.cell(cc_col_w[3], 5.5, str(row["Suma €"]).replace("**",""), border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[0], 5.5, _safe(label), border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[1], 5.5, _safe(str(row["KM"]).replace("**","")), border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[2], 5.5, _safe(str(row["Kaina €/km"])), border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[3], 5.5, _safe(str(row["Suma €"]).replace("**","")), border=1, fill=True, align="C")
         pdf.ln()
         fill = not fill
 
