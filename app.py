@@ -1,6 +1,5 @@
 import os
 import math
-import io
 import datetime
 import requests
 import streamlit as st
@@ -17,7 +16,7 @@ load_dotenv()
 # Konfigūracija
 # ─────────────────────────────────────────────
 st.set_page_config(
-    page_title="Maršruto KM Skaičiuoklė",
+    page_title="Marsruto KM Skaiciuokle",
     page_icon="🗺️",
     layout="wide",
 )
@@ -30,30 +29,6 @@ EUROPE_COUNTRY_SET = (
     "MT,NL,NO,PL,PT,RO,RS,SE,SI,SK,TR,UA,BY,MD,AL,BA,MK,ME,XK,IS,AD,LI,MC,SM,VA"
 )
 
-# Numatytosios km kainos pagal šalį (€/km) – galima keisti UI
-DEFAULT_PRICES = {
-    "DE": 1.25,
-    "FR": 1.16,
-    "BE": 1.10,
-    "NL": 1.15,
-    "DK": 1.20,
-    "PL": 0.95,
-    "CZ": 1.00,
-    "AT": 1.18,
-    "CH": 1.30,
-    "LT": 0.90,
-    "LV": 0.90,
-    "EE": 0.90,
-    "SE": 1.15,
-    "NO": 1.35,
-    "GB": 1.20,
-    "ES": 1.10,
-    "IT": 1.15,
-    "HU": 0.95,
-    "SK": 0.98,
-    "RO": 0.88,
-}
-
 COUNTRY_FLAGS = {
     "DE": "🇩🇪", "FR": "🇫🇷", "BE": "🇧🇪", "NL": "🇳🇱", "DK": "🇩🇰",
     "PL": "🇵🇱", "CZ": "🇨🇿", "AT": "🇦🇹", "CH": "🇨🇭", "LT": "🇱🇹",
@@ -61,6 +36,33 @@ COUNTRY_FLAGS = {
     "ES": "🇪🇸", "IT": "🇮🇹", "HU": "🇭🇺", "SK": "🇸🇰", "RO": "🇷🇴",
     "FI": "🇫🇮", "HR": "🇭🇷", "SI": "🇸🇮", "LU": "🇱🇺", "PT": "🇵🇹",
 }
+
+# Kelių mokesčiai (Maut) EUR/km pagal šalį ir Euro klasę (>7.5t, 4+ ašys)
+# Šaltiniai: oficialūs 2024 tarifai
+MAUT_RATES = {
+    # (šalis): {euro_klase: EUR/km}
+    "DE": {"Euro 6": 0.274, "Euro 5": 0.321, "Euro 4": 0.357, "Euro 3": 0.404, "Euro 2-": 0.450},
+    "AT": {"Euro 6": 0.176, "Euro 5": 0.198, "Euro 4": 0.220, "Euro 3": 0.242, "Euro 2-": 0.264},
+    "CH": {"Euro 6": 0.250, "Euro 5": 0.280, "Euro 4": 0.300, "Euro 3": 0.320, "Euro 2-": 0.350},
+    "BE": {"Euro 6": 0.108, "Euro 5": 0.135, "Euro 4": 0.150, "Euro 3": 0.168, "Euro 2-": 0.185},
+    "PL": {"Euro 6": 0.080, "Euro 5": 0.095, "Euro 4": 0.110, "Euro 3": 0.125, "Euro 2-": 0.140},
+    "CZ": {"Euro 6": 0.095, "Euro 5": 0.115, "Euro 4": 0.130, "Euro 3": 0.148, "Euro 2-": 0.165},
+    "SK": {"Euro 6": 0.085, "Euro 5": 0.105, "Euro 4": 0.120, "Euro 3": 0.138, "Euro 2-": 0.155},
+    "HU": {"Euro 6": 0.075, "Euro 5": 0.095, "Euro 4": 0.110, "Euro 3": 0.125, "Euro 2-": 0.140},
+    "FR": {"Euro 6": 0.120, "Euro 5": 0.145, "Euro 4": 0.165, "Euro 3": 0.185, "Euro 2-": 0.210},
+    "ES": {"Euro 6": 0.090, "Euro 5": 0.110, "Euro 4": 0.125, "Euro 3": 0.140, "Euro 2-": 0.155},
+    "IT": {"Euro 6": 0.110, "Euro 5": 0.135, "Euro 4": 0.155, "Euro 3": 0.175, "Euro 2-": 0.195},
+    "PT": {"Euro 6": 0.095, "Euro 5": 0.115, "Euro 4": 0.130, "Euro 3": 0.148, "Euro 2-": 0.165},
+    # Šalys be Maut (vinjetas arba nėra) – tarifas 0
+    "NL": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
+    "DK": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
+    "SE": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
+    "LT": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
+    "LV": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
+    "EE": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
+}
+
+EURO_CLASSES = ["Euro 6", "Euro 5", "Euro 4", "Euro 3", "Euro 2-"]
 
 # ─────────────────────────────────────────────
 # Geocoding / routing funkcijos
@@ -152,47 +154,167 @@ def segment_distance(a, b):
     return result["distance_km"] if result else None
 
 
-# ─────────────────────────────────────────────
-# Šalių km skirstymas (reverse geocoder)
-# ─────────────────────────────────────────────
-
 def haversine_km(p1, p2):
-    """Atstumas tarp dviejų taškų [lon, lat] kilometrais."""
     R = 6371.0
     lat1, lon1 = math.radians(p1[1]), math.radians(p1[0])
     lat2, lon2 = math.radians(p2[1]), math.radians(p2[0])
-    dlat = lat2 - lat1
-    dlon = lon2 - lon1
+    dlat, dlon = lat2 - lat1, lon2 - lon1
     a = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
     return R * 2 * math.asin(math.sqrt(a))
 
 
 def km_by_country(path_coords, sample_every=5):
-    """
-    Paskaičiuoja km kiekvienoje šalyje pagal maršruto taškus.
-    sample_every: kas kiek taškų tikrina šalį (greičiui).
-    Grąžina {country_code: km}.
-    """
     if not path_coords or len(path_coords) < 2:
         return {}
-
     country_km = defaultdict(float)
-
-    # Imame kas N-ąjį tašką (greičiau, pakankamas tikslumas)
     sampled = path_coords[::sample_every]
     if path_coords[-1] not in sampled:
         sampled.append(path_coords[-1])
-
-    # Batch reverse geocoding (greitas, lokalus)
     coords_latlon = [(pt[1], pt[0]) for pt in sampled]
     results = rg.search(coords_latlon, mode=1, verbose=False)
-
     for i in range(len(sampled) - 1):
         seg_km = haversine_km(sampled[i], sampled[i + 1])
         country = results[i].get("cc", "?")
         country_km[country] += seg_km
-
     return dict(country_km)
+
+
+# ─────────────────────────────────────────────
+# PDF generavimas
+# ─────────────────────────────────────────────
+
+def _safe(text: str) -> str:
+    return (str(text)
+            .replace("—", "-")
+            .replace("–", "-")
+            .replace("€", "EUR")
+            .encode("latin-1", errors="replace")
+            .decode("latin-1"))
+
+
+def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
+                 maut_total, grand_total, client_km, full_route_min,
+                 client_price_per_km, euro_class) -> bytes:
+
+    class PDF(FPDF):
+        def header(self):
+            self.set_font("Helvetica", "B", 13)
+            self.set_fill_color(40, 80, 150)
+            self.set_text_color(255, 255, 255)
+            self.cell(0, 10, "Marsruto KM Ataskaita", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
+            self.set_text_color(0, 0, 0)
+            self.set_font("Helvetica", "", 8)
+            self.cell(0, 6, f"Sugeneruota: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}  |  Euro klase: {euro_class}  |  Kaina/km: {client_price_per_km:.2f} EUR", new_x="LMARGIN", new_y="NEXT")
+            self.ln(2)
+
+        def footer(self):
+            self.set_y(-12)
+            self.set_font("Helvetica", "I", 8)
+            self.set_text_color(130, 130, 130)
+            self.cell(0, 10, f"Puslapis {self.page_no()}", align="C")
+
+    pdf = PDF(orientation="L", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_left_margin(10)
+    pdf.set_right_margin(10)
+
+    # ── Suvestinė ──
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(230, 240, 255)
+    pdf.cell(0, 7, "SUVESTINE", fill=True, new_x="LMARGIN", new_y="NEXT")
+
+    travel_h = int(full_route_min // 60)
+    travel_m = int(full_route_min % 60)
+
+    summary_items = [
+        ("Is viso km (keliais):", f"{total_km:.1f} km"),
+        ("Trukme:", f"{travel_h}h {travel_m}min"),
+        ("Transporto suma:", f"{transport_cost:.2f} EUR  ({client_price_per_km:.2f} EUR/km x {total_km:.1f} km)"),
+        ("Keliu mokesciai (Maut):", f"{maut_total:.2f} EUR  (Euro klase: {euro_class})"),
+        ("BENDRA SUMA:", f"{grand_total:.2f} EUR"),
+    ]
+    if client_km > 0:
+        diff = total_km - client_km
+        sign = "+" if diff > 0 else ""
+        summary_items.insert(2, ("Kliento km:", f"{client_km} km  (skirtumas: {sign}{diff:.1f} km)"))
+
+    for label, value in summary_items:
+        is_total = label == "BENDRA SUMA:"
+        pdf.set_font("Helvetica", "B" if is_total else "B", 9)
+        if is_total:
+            pdf.set_fill_color(210, 230, 210)
+            pdf.cell(70, 6, _safe(label), fill=True)
+            pdf.set_font("Helvetica", "B", 9)
+            pdf.cell(0, 6, _safe(value), fill=True, new_x="LMARGIN", new_y="NEXT")
+        else:
+            pdf.cell(70, 6, _safe(label))
+            pdf.set_font("Helvetica", "", 9)
+            pdf.cell(0, 6, _safe(value), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.ln(4)
+
+    # ── Stotelių lentelė ──
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(230, 240, 255)
+    pdf.cell(0, 7, "STOTELIU LENTELE", fill=True, new_x="LMARGIN", new_y="NEXT")
+
+    col_w = [10, 85, 45, 35, 35]
+    headers = ["Nr.", "Adresas", "Koordinates", "Iki sekancio (km)", "Kaupiamasis (km)"]
+
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(210, 225, 245)
+    for w, h in zip(col_w, headers):
+        pdf.cell(w, 6, h, border=1, fill=True, align="C")
+    pdf.ln()
+
+    pdf.set_font("Helvetica", "", 8)
+    fill_row = False
+    for row in seg_rows:
+        idx = row["Nr."] - 1
+        addr, coord = valid_pairs[idx] if idx < len(valid_pairs) else ("", None)
+        coord_str = f"{coord[0]:.4f}, {coord[1]:.4f}" if coord else "-"
+        pdf.set_fill_color(245, 249, 255) if fill_row else pdf.set_fill_color(255, 255, 255)
+        pdf.cell(col_w[0], 5.5, _safe(row["Nr."]), border=1, fill=fill_row, align="C")
+        pdf.cell(col_w[1], 5.5, _safe(row["Adresas"])[:60], border=1, fill=fill_row)
+        pdf.cell(col_w[2], 5.5, _safe(coord_str), border=1, fill=fill_row, align="C")
+        pdf.cell(col_w[3], 5.5, _safe(row["Iki sekancio (km)"]), border=1, fill=fill_row, align="C")
+        pdf.cell(col_w[4], 5.5, _safe(row["Kaupiamasis (km)"]), border=1, fill=fill_row, align="C")
+        pdf.ln()
+        fill_row = not fill_row
+
+    pdf.ln(4)
+
+    # ── Šalių + Maut lentelė ──
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(230, 240, 255)
+    pdf.cell(0, 7, f"KM PAGAL SALIS IR KELIU MOKESCIAI ({euro_class})", fill=True, new_x="LMARGIN", new_y="NEXT")
+
+    cc_col_w = [35, 30, 30, 30, 30]
+    cc_headers = ["Salis", "KM", "Maut EUR/km", "Maut suma EUR", "Transport. suma EUR"]
+
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(210, 225, 245)
+    for w, h in zip(cc_col_w, cc_headers):
+        pdf.cell(w, 6, h, border=1, fill=True, align="C")
+    pdf.ln()
+
+    pdf.set_font("Helvetica", "", 8)
+    fill_row = False
+    for row in country_rows:
+        is_total = str(row.get("total_row", False))
+        pdf.set_fill_color(220, 230, 245) if row.get("total_row") else (pdf.set_fill_color(245, 249, 255) if fill_row else pdf.set_fill_color(255, 255, 255))
+        pdf.set_font("Helvetica", "B" if row.get("total_row") else "", 8)
+        cc_label = _safe(str(row["Salis"]).encode("ascii","ignore").decode())
+        pdf.cell(cc_col_w[0], 5.5, cc_label, border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[1], 5.5, _safe(row["KM"]), border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[2], 5.5, _safe(row["Maut EUR/km"]), border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[3], 5.5, _safe(row["Maut EUR"]), border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[4], 5.5, _safe(row["Transport. EUR"]), border=1, fill=True, align="C")
+        pdf.ln()
+        fill_row = not fill_row
+
+    return bytes(pdf.output())
 
 
 # ─────────────────────────────────────────────
@@ -225,151 +347,6 @@ def arrow_layer(path_coords, step=10):
     )
 
 
-def _safe(text: str) -> str:
-    """Pakeičia simbolius, kurių nepalaiko Helvetica šriftas."""
-    return (str(text)
-            .replace("—", "-")
-            .replace("–", "-")
-            .replace("€", "EUR")
-            .replace("📏", "")
-            .replace("⏱️", "")
-            .replace("💰", "")
-            .replace("📄", "")
-            .replace("📐", "")
-            .encode("latin-1", errors="replace")
-            .decode("latin-1"))
-
-
-def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, total_cost,
-                 client_km, full_route_min) -> bytes:
-    """Generuoja PDF ataskaitą ir grąžina bytes."""
-
-    class PDF(FPDF):
-        def header(self):
-            self.set_font("Helvetica", "B", 13)
-            self.set_fill_color(40, 80, 150)
-            self.set_text_color(255, 255, 255)
-            self.cell(0, 10, "Marsruto KM Ataskaita", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
-            self.set_text_color(0, 0, 0)
-            self.set_font("Helvetica", "", 8)
-            self.cell(0, 6, f"Sugeneruota: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", new_x="LMARGIN", new_y="NEXT")
-            self.ln(2)
-
-        def footer(self):
-            self.set_y(-12)
-            self.set_font("Helvetica", "I", 8)
-            self.set_text_color(130, 130, 130)
-            self.cell(0, 10, f"Puslapis {self.page_no()}", align="C")
-
-    pdf = PDF(orientation="L", unit="mm", format="A4")
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_left_margin(10)
-    pdf.set_right_margin(10)
-
-    W = pdf.w - 20  # naudojamas plotis
-
-    # ── Suvestinė ──
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_fill_color(230, 240, 255)
-    pdf.cell(0, 7, "SUVESTINE", fill=True, new_x="LMARGIN", new_y="NEXT")
-    pdf.set_font("Helvetica", "", 9)
-
-    travel_h = int(full_route_min // 60)
-    travel_m = int(full_route_min % 60)
-
-    summary_items = [
-        ("Is viso km (keliais):", f"{total_km:.1f} km"),
-        ("Trukme:", f"{travel_h}h {travel_m}min"),
-        ("Bendra kaina:", f"{total_cost:.2f} EUR"),
-    ]
-    if client_km > 0:
-        diff = total_km - client_km
-        sign = "+" if diff > 0 else ""
-        summary_items += [
-            ("Kliento km:", f"{client_km} km"),
-            ("Skirtumas:", f"{sign}{diff:.1f} km"),
-        ]
-
-    for label, value in summary_items:
-        pdf.set_font("Helvetica", "B", 9)
-        pdf.cell(60, 6, _safe(label))
-        pdf.set_font("Helvetica", "", 9)
-        pdf.cell(0, 6, _safe(value), new_x="LMARGIN", new_y="NEXT")
-
-    pdf.ln(4)
-
-    # ── Stotelių lentelė ──
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_fill_color(230, 240, 255)
-    pdf.cell(0, 7, "STOTELIU LENTELE", fill=True, new_x="LMARGIN", new_y="NEXT")
-
-    col_w = [10, 70, 42, 35, 35]
-    headers = ["Nr.", "Adresas", "Koordinates", "Iki sekancio (km)", "Kaupiamasis (km)"]
-
-    pdf.set_font("Helvetica", "B", 8)
-    pdf.set_fill_color(210, 225, 245)
-    for w, h in zip(col_w, headers):
-        pdf.cell(w, 6, h, border=1, fill=True, align="C")
-    pdf.ln()
-
-    pdf.set_font("Helvetica", "", 8)
-    fill = False
-    for row in seg_rows:
-        idx = row["Nr."] - 1
-        addr, coord = valid_pairs[idx] if idx < len(valid_pairs) else ("", None)
-        coord_str = f"{coord[0]:.4f}, {coord[1]:.4f}" if coord else "-"
-        pdf.set_fill_color(245, 249, 255) if fill else pdf.set_fill_color(255, 255, 255)
-        pdf.cell(col_w[0], 5.5, _safe(row["Nr."]), border=1, fill=fill, align="C")
-        pdf.cell(col_w[1], 5.5, _safe(row["Adresas"])[:50], border=1, fill=fill)
-        pdf.cell(col_w[2], 5.5, _safe(coord_str), border=1, fill=fill, align="C")
-        pdf.cell(col_w[3], 5.5, _safe(row["Iki sekančio (km)"]), border=1, fill=fill, align="C")
-        pdf.cell(col_w[4], 5.5, _safe(row["Kaupiamasis (km)"]), border=1, fill=fill, align="C")
-        pdf.ln()
-        fill = not fill
-
-    pdf.ln(4)
-
-    # ── Šalių lentelė ──
-    pdf.set_font("Helvetica", "B", 10)
-    pdf.set_fill_color(230, 240, 255)
-    pdf.cell(0, 7, "KM PAGAL SALIS IR SANAUDOS", fill=True, new_x="LMARGIN", new_y="NEXT")
-
-    cc_col_w = [40, 35, 35, 40]
-    cc_headers = ["Salis", "KM", "Kaina EUR/km", "Suma EUR"]
-
-    pdf.set_font("Helvetica", "B", 8)
-    pdf.set_fill_color(210, 225, 245)
-    for w, h in zip(cc_col_w, cc_headers):
-        pdf.cell(w, 6, h, border=1, fill=True, align="C")
-    pdf.ln()
-
-    pdf.set_font("Helvetica", "", 8)
-    fill = False
-    for row in country_rows:
-        is_total = str(row["Šalis"]).startswith("**")
-        if is_total:
-            pdf.set_font("Helvetica", "B", 8)
-            pdf.set_fill_color(220, 230, 245)
-            label = "VISO"
-        else:
-            pdf.set_font("Helvetica", "", 8)
-            pdf.set_fill_color(245, 249, 255) if fill else pdf.set_fill_color(255, 255, 255)
-            label = str(row["Šalis"]).replace("🇩🇪","DE").replace("🇫🇷","FR").replace("🇧🇪","BE") \
-                .replace("🇳🇱","NL").replace("🇩🇰","DK").replace("🇵🇱","PL").replace("🇨🇿","CZ") \
-                .replace("🇦🇹","AT").replace("🇨🇭","CH").replace("🇱🇹","LT").replace("🇱🇻","LV") \
-                .replace("🇪🇪","EE").replace("🇸🇪","SE").replace("🇳🇴","NO").replace("🇬🇧","GB") \
-                .encode("ascii","ignore").decode()
-        pdf.cell(cc_col_w[0], 5.5, _safe(label), border=1, fill=True, align="C")
-        pdf.cell(cc_col_w[1], 5.5, _safe(str(row["KM"]).replace("**","")), border=1, fill=True, align="C")
-        pdf.cell(cc_col_w[2], 5.5, _safe(str(row["Kaina €/km"])), border=1, fill=True, align="C")
-        pdf.cell(cc_col_w[3], 5.5, _safe(str(row["Suma €"]).replace("**","")), border=1, fill=True, align="C")
-        pdf.ln()
-        fill = not fill
-
-    return bytes(pdf.output())
-
-
 def parse_addresses(text: str) -> list:
     lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
     if not lines:
@@ -390,7 +367,7 @@ def parse_addresses(text: str) -> list:
 # ─────────────────────────────────────────────
 
 st.title("🗺️ Maršruto KM Skaičiuoklė")
-st.caption("Įklijuokite adresus → km pagal šalis → sąnaudų skaičiavimas")
+st.caption("Įklijuokite adresus → km pagal šalis → transporto ir kelių mokesčių skaičiavimas")
 
 if not AZURE_MAPS_KEY:
     st.error("⚠️ AZURE_MAPS_KEY nenustatytas.")
@@ -414,28 +391,23 @@ with col_input:
     )
 
 with col_right:
-    client_km = st.number_input("📄 Kliento km (palyginimui)", min_value=0, value=0, step=10)
+    client_price_per_km = st.number_input(
+        "💶 Kliento kaina (EUR/km)",
+        min_value=0.0,
+        value=1.16,
+        step=0.01,
+        format="%.2f",
+        help="Kliento mokama kaina už 1 km",
+    )
+    euro_class = st.selectbox(
+        "🚛 Vilkiko Euro klasė",
+        options=EURO_CLASSES,
+        index=0,
+        help="Euro 6 = mažiausi kelių mokesčiai",
+    )
+    client_km = st.number_input("📄 Kliento nurodyti km (palyginimui)", min_value=0, value=0, step=10)
     st.write("")
     calculate = st.button("🧮 Skaičiuoti", type="primary", use_container_width=True)
-
-# ── Kainų nustatymai ──
-with st.expander("💶 Km kainos pagal šalį (€/km) – redaguojamos", expanded=False):
-    st.caption("Numatytosios kainos – galite keisti prieš skaičiuodami.")
-    price_cols = st.columns(5)
-    user_prices = {}
-    sorted_countries = sorted(DEFAULT_PRICES.keys())
-    for idx, cc in enumerate(sorted_countries):
-        flag = COUNTRY_FLAGS.get(cc, "")
-        col = price_cols[idx % 5]
-        user_prices[cc] = col.number_input(
-            f"{flag} {cc}",
-            min_value=0.0,
-            max_value=5.0,
-            value=DEFAULT_PRICES[cc],
-            step=0.01,
-            format="%.2f",
-            key=f"price_{cc}",
-        )
 
 st.divider()
 
@@ -450,7 +422,7 @@ if calculate and raw_text.strip():
     # 1. Geocoding
     with st.status("📍 Geocoding adresai...", expanded=True) as status:
         geocode_results = []
-        for i, addr in enumerate(addresses):
+        for addr in addresses:
             st.write(f"🔍 {addr}")
             result = geocode(addr)
             geocode_results.append((addr, result))
@@ -476,22 +448,20 @@ if calculate and raw_text.strip():
     total_km = full_route["distance_km"]
     path_coords = full_route["path_coords"]
 
-    # 3. Segmentų atstumai (tarp stotelių)
+    # 3. Segmentų atstumai
     with st.spinner("📏 Skaičiuojami tarpiniai atstumai..."):
         seg_rows = []
         cumulative = 0.0
         for i in range(len(valid_pairs)):
             addr, coord = valid_pairs[i]
-            if i < len(valid_pairs) - 1:
-                seg_km = segment_distance(all_coords[i], all_coords[i + 1])
-            else:
-                seg_km = None
+            seg_km = segment_distance(all_coords[i], all_coords[i + 1]) if i < len(valid_pairs) - 1 else None
             if seg_km:
                 cumulative += seg_km
             seg_rows.append({
                 "Nr.": i + 1,
                 "Adresas": addr,
-                "Iki sekančio (km)": f"{seg_km:.1f}" if seg_km else "—",
+                "Koordinates": f"{coord[0]:.4f}, {coord[1]:.4f}",
+                "Iki sekancio (km)": f"{seg_km:.1f}" if seg_km else "-",
                 "Kaupiamasis (km)": f"{cumulative:.1f}",
             })
 
@@ -499,7 +469,6 @@ if calculate and raw_text.strip():
     with st.spinner("🌍 Skirstoma pagal šalis..."):
         country_km_raw = km_by_country(path_coords, sample_every=5)
 
-    # Normalizuojame iki real total km
     raw_total = sum(country_km_raw.values())
     if raw_total > 0:
         factor = total_km / raw_total
@@ -507,56 +476,68 @@ if calculate and raw_text.strip():
     else:
         country_km = {}
 
+    # 5. Skaičiavimai
+    transport_cost = round(total_km * client_price_per_km, 2)
+
+    maut_rows = []
+    maut_total = 0.0
+    for cc, km in country_km.items():
+        maut_rate = MAUT_RATES.get(cc, {}).get(euro_class, 0.0)
+        maut_cost = round(km * maut_rate, 2)
+        transport_cc = round(km * client_price_per_km, 2)
+        maut_total += maut_cost
+        flag = COUNTRY_FLAGS.get(cc, "")
+        maut_rows.append({
+            "Salis": f"{flag} {cc}",
+            "KM": f"{km:.1f}",
+            "Maut EUR/km": f"{maut_rate:.3f}" if maut_rate > 0 else "-",
+            "Maut EUR": f"{maut_cost:.2f}" if maut_cost > 0 else "-",
+            "Transport. EUR": f"{transport_cc:.2f}",
+            "total_row": False,
+        })
+
+    maut_total = round(maut_total, 2)
+    grand_total = round(transport_cost + maut_total, 2)
+
+    # Iš viso eilutė
+    maut_rows.append({
+        "Salis": "VISO",
+        "KM": f"{total_km:.1f}",
+        "Maut EUR/km": "-",
+        "Maut EUR": f"{maut_total:.2f}",
+        "Transport. EUR": f"{transport_cost:.2f}",
+        "total_row": True,
+    })
+
     # ── Rezultatai ──
     st.divider()
     st.markdown("### 📊 Stotelių lentelė")
     st.dataframe(pd.DataFrame(seg_rows), hide_index=True, use_container_width=True)
 
-    mc1, mc2, mc3 = st.columns(3)
-    mc1.metric("📏 Iš viso km (keliais)", f"{total_km:.1f} km")
-    mc2.metric("⏱️ Trukmė", f"{int(full_route['travel_time_min'] // 60)}h {int(full_route['travel_time_min'] % 60)}min")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("📏 Iš viso km", f"{total_km:.1f} km")
+    m2.metric("⏱️ Trukmė", f"{int(full_route['travel_time_min']//60)}h {int(full_route['travel_time_min']%60)}min")
     if client_km > 0:
         diff = total_km - client_km
         sign = "+" if diff > 0 else ""
-        mc3.metric("📐 Skirtumas nuo kliento", f"{sign}{diff:.1f} km",
-                   delta=f"{client_km} km kliento", delta_color="off")
+        m3.metric("📐 Skirtumas nuo kliento", f"{sign}{diff:.1f} km", delta=f"{client_km} km kliento", delta_color="off")
 
-    # ── Šalių suvestinė ir kainų skaičiavimas ──
-    if country_km:
-        st.divider()
-        st.markdown("### 🌍 KM pagal šalis ir sąnaudos")
+    st.divider()
+    st.markdown(f"### 🌍 KM pagal šalis ir kelių mokesčiai ({euro_class})")
 
-        country_rows = []
-        total_cost = 0.0
-        for cc, km in country_km.items():
-            price = user_prices.get(cc, 0.0)
-            cost = round(km * price, 2)
-            total_cost += cost
-            flag = COUNTRY_FLAGS.get(cc, "")
-            country_rows.append({
-                "Šalis": f"{flag} {cc}",
-                "KM": f"{km:.1f}",
-                "Kaina €/km": f"{price:.2f}",
-                "Suma €": f"{cost:.2f}",
-            })
+    display_rows = [{k: v for k, v in r.items() if k != "total_row"} for r in maut_rows]
+    st.dataframe(pd.DataFrame(display_rows), hide_index=True, use_container_width=True)
 
-        # Iš viso eilutė
-        country_rows.append({
-            "Šalis": "**VISO**",
-            "KM": f"**{total_km:.1f}**",
-            "Kaina €/km": "—",
-            "Suma €": f"**{total_cost:.2f}**",
-        })
-
-        st.dataframe(pd.DataFrame(country_rows), hide_index=True, use_container_width=True)
-
-        cost_cols = st.columns(3)
-        cost_cols[0].metric("💰 Bendra suma", f"{total_cost:.2f} €")
-        if total_km > 0:
-            cost_cols[1].metric("📊 Vid. kaina/km", f"{total_cost/total_km:.3f} €/km")
-        if client_km > 0 and total_km > 0:
-            client_cost = round(client_km * (total_cost / total_km), 2)
-            cost_cols[2].metric("📄 Kliento km suma", f"{client_cost:.2f} €")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("🚛 Transporto suma", f"{transport_cost:.2f} EUR",
+              help=f"{client_price_per_km:.2f} EUR/km × {total_km:.1f} km")
+    c2.metric("🛣️ Kelių mokesčiai (Maut)", f"{maut_total:.2f} EUR",
+              help=f"Pagal {euro_class}")
+    c3.metric("💰 BENDRA SUMA", f"{grand_total:.2f} EUR")
+    if client_km > 0:
+        client_transport = round(client_km * client_price_per_km, 2)
+        c4.metric("📄 Kliento km suma", f"{client_transport:.2f} EUR",
+                  help=f"{client_km} km × {client_price_per_km:.2f} EUR/km")
 
     # ── Žemėlapis ──
     st.divider()
@@ -605,18 +586,22 @@ if calculate and raw_text.strip():
         tooltip={"text": "{name}"},
     ))
 
-    # ── PDF atsisiuntimas ──
+    # ── PDF ──
     st.divider()
     st.markdown("### 📥 Ataskaita")
     try:
         pdf_bytes = generate_pdf(
             seg_rows=seg_rows,
             valid_pairs=valid_pairs,
-            country_rows=country_rows if country_km else [],
+            country_rows=maut_rows,
             total_km=total_km,
-            total_cost=total_cost if country_km else 0.0,
+            transport_cost=transport_cost,
+            maut_total=maut_total,
+            grand_total=grand_total,
             client_km=client_km,
             full_route_min=full_route["travel_time_min"],
+            client_price_per_km=client_price_per_km,
+            euro_class=euro_class,
         )
         fname = f"marsrutas_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
         st.download_button(
