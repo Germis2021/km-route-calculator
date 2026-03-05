@@ -1,5 +1,7 @@
 import os
 import math
+import io
+import datetime
 import requests
 import streamlit as st
 import pandas as pd
@@ -7,6 +9,7 @@ import pydeck as pdk
 import reverse_geocoder as rg
 from collections import defaultdict
 from dotenv import load_dotenv
+from fpdf import FPDF
 
 load_dotenv()
 
@@ -220,6 +223,136 @@ def arrow_layer(path_coords, step=10):
         pickable=False,
         billboard=True,
     )
+
+
+def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, total_cost,
+                 client_km, full_route_min) -> bytes:
+    """Generuoja PDF ataskaitą ir grąžina bytes."""
+
+    class PDF(FPDF):
+        def header(self):
+            self.set_font("Helvetica", "B", 13)
+            self.set_fill_color(40, 80, 150)
+            self.set_text_color(255, 255, 255)
+            self.cell(0, 10, "Marsruto KM Ataskaita", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
+            self.set_text_color(0, 0, 0)
+            self.set_font("Helvetica", "", 8)
+            self.cell(0, 6, f"Sugeneruota: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}", new_x="LMARGIN", new_y="NEXT")
+            self.ln(2)
+
+        def footer(self):
+            self.set_y(-12)
+            self.set_font("Helvetica", "I", 8)
+            self.set_text_color(130, 130, 130)
+            self.cell(0, 10, f"Puslapis {self.page_no()}", align="C")
+
+    pdf = PDF(orientation="L", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_left_margin(10)
+    pdf.set_right_margin(10)
+
+    W = pdf.w - 20  # naudojamas plotis
+
+    # ── Suvestinė ──
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(230, 240, 255)
+    pdf.cell(0, 7, "SUVESTINE", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 9)
+
+    travel_h = int(full_route_min // 60)
+    travel_m = int(full_route_min % 60)
+
+    summary_items = [
+        ("Is viso km (keliais):", f"{total_km:.1f} km"),
+        ("Trukme:", f"{travel_h}h {travel_m}min"),
+        ("Bendra kaina:", f"{total_cost:.2f} EUR"),
+    ]
+    if client_km > 0:
+        diff = total_km - client_km
+        sign = "+" if diff > 0 else ""
+        summary_items += [
+            ("Kliento km:", f"{client_km} km"),
+            ("Skirtumas:", f"{sign}{diff:.1f} km"),
+        ]
+
+    for label, value in summary_items:
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.cell(60, 6, label)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.cell(0, 6, value, new_x="LMARGIN", new_y="NEXT")
+
+    pdf.ln(4)
+
+    # ── Stotelių lentelė ──
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(230, 240, 255)
+    pdf.cell(0, 7, "STOTELIU LENTELE", fill=True, new_x="LMARGIN", new_y="NEXT")
+
+    col_w = [10, 70, 42, 35, 35]
+    headers = ["Nr.", "Adresas", "Koordinates", "Iki sekancio (km)", "Kaupiamasis (km)"]
+
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(210, 225, 245)
+    for w, h in zip(col_w, headers):
+        pdf.cell(w, 6, h, border=1, fill=True, align="C")
+    pdf.ln()
+
+    pdf.set_font("Helvetica", "", 8)
+    fill = False
+    for row in seg_rows:
+        idx = row["Nr."] - 1
+        addr, coord = valid_pairs[idx] if idx < len(valid_pairs) else ("", None)
+        coord_str = f"{coord[0]:.4f}, {coord[1]:.4f}" if coord else "-"
+        pdf.set_fill_color(245, 249, 255) if fill else pdf.set_fill_color(255, 255, 255)
+        pdf.cell(col_w[0], 5.5, str(row["Nr."]), border=1, fill=fill, align="C")
+        pdf.cell(col_w[1], 5.5, str(row["Adresas"])[:50], border=1, fill=fill)
+        pdf.cell(col_w[2], 5.5, coord_str, border=1, fill=fill, align="C")
+        pdf.cell(col_w[3], 5.5, str(row["Iki sekančio (km)"]), border=1, fill=fill, align="C")
+        pdf.cell(col_w[4], 5.5, str(row["Kaupiamasis (km)"]), border=1, fill=fill, align="C")
+        pdf.ln()
+        fill = not fill
+
+    pdf.ln(4)
+
+    # ── Šalių lentelė ──
+    pdf.set_font("Helvetica", "B", 10)
+    pdf.set_fill_color(230, 240, 255)
+    pdf.cell(0, 7, "KM PAGAL SALIS IR SANAUDOS", fill=True, new_x="LMARGIN", new_y="NEXT")
+
+    cc_col_w = [40, 35, 35, 40]
+    cc_headers = ["Salis", "KM", "Kaina EUR/km", "Suma EUR"]
+
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_fill_color(210, 225, 245)
+    for w, h in zip(cc_col_w, cc_headers):
+        pdf.cell(w, 6, h, border=1, fill=True, align="C")
+    pdf.ln()
+
+    pdf.set_font("Helvetica", "", 8)
+    fill = False
+    for row in country_rows:
+        is_total = str(row["Šalis"]).startswith("**")
+        if is_total:
+            pdf.set_font("Helvetica", "B", 8)
+            pdf.set_fill_color(220, 230, 245)
+            label = "VISO"
+        else:
+            pdf.set_font("Helvetica", "", 8)
+            pdf.set_fill_color(245, 249, 255) if fill else pdf.set_fill_color(255, 255, 255)
+            label = str(row["Šalis"]).replace("🇩🇪","DE").replace("🇫🇷","FR").replace("🇧🇪","BE") \
+                .replace("🇳🇱","NL").replace("🇩🇰","DK").replace("🇵🇱","PL").replace("🇨🇿","CZ") \
+                .replace("🇦🇹","AT").replace("🇨🇭","CH").replace("🇱🇹","LT").replace("🇱🇻","LV") \
+                .replace("🇪🇪","EE").replace("🇸🇪","SE").replace("🇳🇴","NO").replace("🇬🇧","GB") \
+                .encode("ascii","ignore").decode()
+        pdf.cell(cc_col_w[0], 5.5, label, border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[1], 5.5, str(row["KM"]).replace("**",""), border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[2], 5.5, str(row["Kaina €/km"]), border=1, fill=True, align="C")
+        pdf.cell(cc_col_w[3], 5.5, str(row["Suma €"]).replace("**",""), border=1, fill=True, align="C")
+        pdf.ln()
+        fill = not fill
+
+    return bytes(pdf.output())
 
 
 def parse_addresses(text: str) -> list:
@@ -456,3 +589,28 @@ if calculate and raw_text.strip():
         layers=layers,
         tooltip={"text": "{name}"},
     ))
+
+    # ── PDF atsisiuntimas ──
+    st.divider()
+    st.markdown("### 📥 Ataskaita")
+    try:
+        pdf_bytes = generate_pdf(
+            seg_rows=seg_rows,
+            valid_pairs=valid_pairs,
+            country_rows=country_rows if country_km else [],
+            total_km=total_km,
+            total_cost=total_cost if country_km else 0.0,
+            client_km=client_km,
+            full_route_min=full_route["travel_time_min"],
+        )
+        fname = f"marsrutas_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
+        st.download_button(
+            label="📄 Atsisiųsti PDF ataskaitą",
+            data=pdf_bytes,
+            file_name=fname,
+            mime="application/pdf",
+            type="primary",
+            use_container_width=True,
+        )
+    except Exception as e:
+        st.warning(f"PDF generavimo klaida: {e}")
