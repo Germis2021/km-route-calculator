@@ -9,6 +9,7 @@ import reverse_geocoder as rg
 from collections import defaultdict
 from dotenv import load_dotenv
 from fpdf import FPDF
+import stripe
 
 load_dotenv()
 
@@ -21,8 +22,143 @@ st.set_page_config(
     layout="wide",
 )
 
+# Streamlit brendo paslėpimas
+st.markdown("""
+<style>
+#MainMenu {visibility: hidden;}
+footer {visibility: hidden;}
+header {visibility: hidden;}
+.stDeployButton {display: none;}
+[data-testid="stToolbar"] {display: none;}
+[data-testid="stDecoration"] {display: none;}
+[data-testid="stStatusWidget"] {display: none;}
+</style>
+""", unsafe_allow_html=True)
+
 AZURE_MAPS_KEY = os.getenv("AZURE_MAPS_KEY") or st.secrets.get("AZURE_MAPS_KEY", "")
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
+STRIPE_API_BASE_URL = os.getenv("STRIPE_API_BASE_URL", "http://localhost:8000")
+TRIAL_ROUTE_LIMIT = 10
 BASE_URL = "https://atlas.microsoft.com"
+
+# ─────────────────────────────────────────────
+# Stripe auth (be DB – Stripe saugo viską)
+# ─────────────────────────────────────────────
+
+def _get_subscription_info(customer_id: str):
+    """Grąžina subscription statusą ir planą iš Stripe. Return: (is_active, badge_text, subscription_obj|None)."""
+    if not STRIPE_SECRET_KEY or not customer_id:
+        return False, None, None
+    try:
+        stripe.api_key = STRIPE_SECRET_KEY
+        subs = stripe.Subscription.list(
+            customer=customer_id,
+            status="all",
+            expand=["data.items.data.price"],
+            limit=5,
+        )
+        for sub in subs.get("data", []):
+            if sub["status"] in ("active", "trialing"):
+                # Plan badge: Trial / PRO Menesinis / PRO Metinis
+                trial_end = sub.get("trial_end")
+                interval = None
+                for item in sub.get("items", {}).get("data", []):
+                    price = item.get("price") or {}
+                    rec = price.get("recurring") or {}
+                    interval = rec.get("interval")
+                    break
+                if sub["status"] == "trialing" and trial_end:
+                    end = datetime.datetime.utcfromtimestamp(trial_end).date()
+                    days_left = (end - datetime.datetime.utcnow().date()).days
+                    days_left = max(0, days_left)
+                    badge = f"Trial: {days_left} dienų liko"
+                elif interval == "month":
+                    badge = "PRO Menešinis"
+                elif interval == "year":
+                    badge = "PRO Metinis"
+                else:
+                    badge = "PRO"
+                return True, badge, sub
+        return False, None, None
+    except stripe.StripeError:
+        return False, None, None
+
+
+def _handle_checkout_redirect():
+    """Iš URL ?session_id=... ištraukia customer_id ir išsaugo į session_state."""
+    session_id = st.query_params.get("session_id")
+    if not session_id or not STRIPE_SECRET_KEY:
+        return
+    try:
+        stripe.api_key = STRIPE_SECRET_KEY
+        session = stripe.checkout.Session.retrieve(session_id, expand=["customer"])
+        cid = session.get("customer")
+        if isinstance(cid, dict):
+            cid = cid.get("id")
+        if cid:
+            st.session_state["stripe_customer_id"] = cid
+    except stripe.StripeError:
+        pass
+
+
+def _is_subscribed_and_badge():
+    """
+    Tikrina subscription kiekviename puslapio užkrovime.
+    Returns: (show_calculator: bool, badge_text: str|None, subscription_obj|None).
+    """
+    if "stripe_customer_id" not in st.session_state:
+        st.session_state["stripe_customer_id"] = None
+    if "routes_used" not in st.session_state:
+        st.session_state["routes_used"] = 0
+
+    _handle_checkout_redirect()
+    customer_id = st.session_state.get("stripe_customer_id")
+    if not customer_id:
+        return False, None, None
+
+    is_active, badge, sub = _get_subscription_info(customer_id)
+    if is_active:
+        return True, badge, sub
+    return False, None, None
+
+
+def _render_landing():
+    """Landing puslapis su kainodara ir trimis mygtukais."""
+    st.title("🗺️ RouteCalc – Maršruto KM skaičiuoklė")
+    st.markdown("Skaičiuokite maršruto km pagal šalis, transporto ir kelių mokesčius (Maut).")
+    st.divider()
+    st.subheader("Kainodara")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("#### Nemokamas bandymas")
+        st.markdown("**7 dienos**")
+        st.markdown("Pilna prieiga, 10 maršrutų limitas.")
+        url_trial = f"{STRIPE_API_BASE_URL}/create-checkout-session?plan=trial"
+        st.link_button("Pradėti nemokamai 7 dienas", url=url_trial, type="primary", use_container_width=True)
+    with col2:
+        st.markdown("#### Menešinis")
+        st.markdown("**19 EUR/men**")
+        st.markdown("Neriboti maršrutai.")
+        url_monthly = f"{STRIPE_API_BASE_URL}/create-checkout-session?plan=monthly"
+        st.link_button("Menešinis 19 EUR/men", url=url_monthly, use_container_width=True)
+    with col3:
+        st.markdown("#### Metinis")
+        st.markdown("**149 EUR/metus**")
+        st.markdown("Sutaupykite ~35%.")
+        url_yearly = f"{STRIPE_API_BASE_URL}/create-checkout-session?plan=yearly"
+        st.link_button("Metinis 149 EUR/metus", url=url_yearly, use_container_width=True)
+    st.divider()
+    st.caption("Po apmokėjimo būsite nukreipti atgal į programą.")
+
+
+def _render_subscription_expired(customer_id: str):
+    """Prenumerata pasibaigė – rodyti portal nuorodą."""
+    st.title("🗺️ RouteCalc")
+    st.warning("Prenumerata pasibaigė.")
+    portal_url = f"{STRIPE_API_BASE_URL}/customer-portal?customer_id={customer_id}"
+    st.link_button("Valdyti prenumeratą (atnaujinti, pakeisti planą)", url=portal_url, type="primary")
+    st.stop()
+
 
 EUROPE_COUNTRY_SET = (
     "AT,BE,BG,CH,CY,CZ,DE,DK,EE,ES,FI,FR,GB,GR,HR,HU,IE,IT,LT,LU,LV,"
@@ -366,11 +502,42 @@ def parse_addresses(text: str) -> list:
 # UI
 # ─────────────────────────────────────────────
 
+show_calc, plan_badge, subscription_obj = _is_subscribed_and_badge()
+customer_id = st.session_state.get("stripe_customer_id")
+
+if not show_calc and customer_id:
+    _render_subscription_expired(customer_id)
+
+if not show_calc:
+    _render_landing()
+    st.stop()
+
+is_trial = subscription_obj and subscription_obj.get("status") == "trialing"
+routes_used = st.session_state.get("routes_used", 0)
+
+# ── Prenumerata aktyvi: rodyti kalkuliatorių ──
+if plan_badge:
+    badge_col, portal_col, _ = st.columns([1, 1, 4])
+    with badge_col:
+        st.markdown(f"**{plan_badge}**")
+        if is_trial:
+            st.caption(f"Maršrutų naudota: {routes_used}/{TRIAL_ROUTE_LIMIT}")
+    with portal_col:
+        portal_url = f"{STRIPE_API_BASE_URL}/customer-portal?customer_id={customer_id}"
+        st.link_button("Valdyti prenumeratą", url=portal_url, use_container_width=True)
+
 st.title("🗺️ Maršruto KM Skaičiuoklė")
 st.caption("Įklijuokite adresus → km pagal šalis → transporto ir kelių mokesčių skaičiavimas")
 
 if not AZURE_MAPS_KEY:
     st.error("⚠️ AZURE_MAPS_KEY nenustatytas.")
+    st.stop()
+
+# Trial limitas: max 10 maršrutų
+if is_trial and routes_used >= TRIAL_ROUTE_LIMIT:
+    st.error(f"Išnaudojote {TRIAL_ROUTE_LIMIT} nemokamus maršrutus. Atnaujinkite į Pro.")
+    portal_url = f"{STRIPE_API_BASE_URL}/customer-portal?customer_id={customer_id}"
+    st.link_button("Atnaujinti į Pro", url=portal_url, type="primary")
     st.stop()
 
 # ── Įvestis ──
@@ -444,6 +611,9 @@ if calculate and raw_text.strip():
     if not full_route:
         st.error("Nepavyko gauti maršruto iš Azure Maps.")
         st.stop()
+
+    if is_trial:
+        st.session_state["routes_used"] = st.session_state.get("routes_used", 0) + 1
 
     total_km = full_route["distance_km"]
     path_coords = full_route["path_coords"]
