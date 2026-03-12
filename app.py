@@ -37,9 +37,25 @@ header {visibility: hidden;}
 
 AZURE_MAPS_KEY = os.getenv("AZURE_MAPS_KEY") or st.secrets.get("AZURE_MAPS_KEY", "")
 STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY")
-STRIPE_API_BASE_URL = os.getenv("STRIPE_API_BASE_URL", "http://localhost:8000")
+APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8501")
+STRIPE_PRICE_TRIAL = os.getenv("STRIPE_PRICE_TRIAL")
+STRIPE_PRICE_MONTHLY = os.getenv("STRIPE_PRICE_MONTHLY")
+STRIPE_PRICE_YEARLY = os.getenv("STRIPE_PRICE_YEARLY")
 TRIAL_ROUTE_LIMIT = 10
 BASE_URL = "https://atlas.microsoft.com"
+
+# Pending redirect (Stripe Checkout or Portal) – handle before any auth
+if "pending_redirect_url" not in st.session_state:
+    st.session_state["pending_redirect_url"] = None
+if st.session_state.get("pending_redirect_url"):
+    url = st.session_state["pending_redirect_url"]
+    st.session_state["pending_redirect_url"] = None
+    st.markdown(
+        f'<meta http-equiv="refresh" content="0;url={url}"/>',
+        unsafe_allow_html=True,
+    )
+    st.info("Nukreipiama į mokėjimą...")
+    st.stop()
 
 # ─────────────────────────────────────────────
 # Stripe auth (be DB – Stripe saugo viską)
@@ -101,6 +117,52 @@ def _handle_checkout_redirect():
         pass
 
 
+def _create_checkout_session(plan: str) -> str | None:
+    """Sukuria Stripe Checkout Session ir grąžina redirect URL. plan: trial | monthly | yearly."""
+    if not STRIPE_SECRET_KEY or not APP_BASE_URL:
+        return None
+    plan = plan.lower().strip()
+    if plan not in ("trial", "monthly", "yearly"):
+        return None
+    if plan == "trial":
+        price_id = STRIPE_PRICE_TRIAL or STRIPE_PRICE_MONTHLY
+    elif plan == "monthly":
+        price_id = STRIPE_PRICE_MONTHLY
+    else:
+        price_id = STRIPE_PRICE_YEARLY
+    if not price_id:
+        return None
+    try:
+        stripe.api_key = STRIPE_SECRET_KEY
+        kwargs = {
+            "mode": "subscription",
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "success_url": f"{APP_BASE_URL}/?session_id={{CHECKOUT_SESSION_ID}}",
+            "cancel_url": APP_BASE_URL + "/",
+        }
+        if plan == "trial":
+            kwargs["subscription_data"] = {"trial_period_days": 7}
+        session = stripe.checkout.Session.create(**kwargs)
+        return session.url
+    except stripe.StripeError:
+        return None
+
+
+def _create_portal_session(customer_id: str) -> str | None:
+    """Sukuria Stripe Customer Portal session ir grąžina redirect URL."""
+    if not STRIPE_SECRET_KEY or not APP_BASE_URL or not customer_id:
+        return None
+    try:
+        stripe.api_key = STRIPE_SECRET_KEY
+        session = stripe.billing_portal.Session.create(
+            customer=customer_id,
+            return_url=APP_BASE_URL + "/",
+        )
+        return session.url
+    except stripe.StripeError:
+        return None
+
+
 def _is_subscribed_and_badge():
     """
     Tikrina subscription kiekviename puslapio užkrovime.
@@ -133,20 +195,35 @@ def _render_landing():
         st.markdown("#### Nemokamas bandymas")
         st.markdown("**7 dienos**")
         st.markdown("Pilna prieiga, 10 maršrutų limitas.")
-        url_trial = f"{STRIPE_API_BASE_URL}/create-checkout-session?plan=trial"
-        st.link_button("Pradėti nemokamai 7 dienas", url=url_trial, type="primary", use_container_width=True)
+        if st.button("Pradėti nemokamai 7 dienas", type="primary", key="btn_trial", use_container_width=True):
+            url = _create_checkout_session("trial")
+            if url:
+                st.session_state["pending_redirect_url"] = url
+                st.rerun()
+            else:
+                st.error("Nepavyko pradėti. Patikrinkite STRIPE_* kintamuosius.")
     with col2:
         st.markdown("#### Mėnesinis")
         st.markdown("**19 EUR/men**")
         st.markdown("Neriboti maršrutai.")
-        url_monthly = f"{STRIPE_API_BASE_URL}/create-checkout-session?plan=monthly"
-        st.link_button("Mėnesinis 19 EUR/men", url=url_monthly, use_container_width=True)
+        if st.button("Mėnesinis 19 EUR/men", key="btn_monthly", use_container_width=True):
+            url = _create_checkout_session("monthly")
+            if url:
+                st.session_state["pending_redirect_url"] = url
+                st.rerun()
+            else:
+                st.error("Nepavyko pradėti. Patikrinkite STRIPE_* kintamuosius.")
     with col3:
         st.markdown("#### Metinis")
         st.markdown("**149 EUR/metus**")
         st.markdown("Sutaupykite ~35%.")
-        url_yearly = f"{STRIPE_API_BASE_URL}/create-checkout-session?plan=yearly"
-        st.link_button("Metinis 149 EUR/metus", url=url_yearly, use_container_width=True)
+        if st.button("Metinis 149 EUR/metus", key="btn_yearly", use_container_width=True):
+            url = _create_checkout_session("yearly")
+            if url:
+                st.session_state["pending_redirect_url"] = url
+                st.rerun()
+            else:
+                st.error("Nepavyko pradėti. Patikrinkite STRIPE_* kintamuosius.")
     st.divider()
     st.caption("Po apmokėjimo būsite nukreipti atgal į programą.")
 
@@ -155,8 +232,13 @@ def _render_subscription_expired(customer_id: str):
     """Prenumerata pasibaigė – rodyti portal nuorodą."""
     st.title("🗺️ RouteCalc")
     st.warning("Prenumerata pasibaigė.")
-    portal_url = f"{STRIPE_API_BASE_URL}/customer-portal?customer_id={customer_id}"
-    st.link_button("Valdyti prenumeratą (atnaujinti, pakeisti planą)", url=portal_url, type="primary")
+    if st.button("Valdyti prenumeratą (atnaujinti, pakeisti planą)", type="primary", key="btn_portal_expired"):
+        url = _create_portal_session(customer_id)
+        if url:
+            st.session_state["pending_redirect_url"] = url
+            st.rerun()
+        else:
+            st.error("Nepavyko atidaryti portalo.")
     st.stop()
 
 
@@ -523,8 +605,13 @@ if plan_badge:
         if is_trial:
             st.caption(f"Maršrutų naudota: {routes_used}/{TRIAL_ROUTE_LIMIT}")
     with portal_col:
-        portal_url = f"{STRIPE_API_BASE_URL}/customer-portal?customer_id={customer_id}"
-        st.link_button("Valdyti prenumeratą", url=portal_url, use_container_width=True)
+        if st.button("Valdyti prenumeratą", key="btn_portal", use_container_width=True):
+            url = _create_portal_session(customer_id)
+            if url:
+                st.session_state["pending_redirect_url"] = url
+                st.rerun()
+            else:
+                st.error("Nepavyko atidaryti portalo.")
 
 st.title("🗺️ Maršruto KM Skaičiuoklė")
 st.caption("Įklijuokite adresus → km pagal šalis → transporto ir kelių mokesčių skaičiavimas")
@@ -536,8 +623,13 @@ if not AZURE_MAPS_KEY:
 # Trial limitas: max 10 maršrutų
 if is_trial and routes_used >= TRIAL_ROUTE_LIMIT:
     st.error(f"Išnaudojote {TRIAL_ROUTE_LIMIT} nemokamus maršrutus. Atnaujinkite į Pro.")
-    portal_url = f"{STRIPE_API_BASE_URL}/customer-portal?customer_id={customer_id}"
-    st.link_button("Atnaujinti į Pro", url=portal_url, type="primary")
+    if st.button("Atnaujinti į Pro", type="primary", key="btn_upgrade"):
+        url = _create_portal_session(customer_id)
+        if url:
+            st.session_state["pending_redirect_url"] = url
+            st.rerun()
+        else:
+            st.error("Nepavyko atidaryti portalo.")
     st.stop()
 
 # ── Įvestis ──
