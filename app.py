@@ -73,7 +73,7 @@ def _get_subscription_info(customer_id: str):
                     days_left = max(0, days_left)
                     badge = f"Trial: {days_left} dienų liko"
                 elif interval == "month":
-                    badge = "PRO Menešinis"
+                    badge = "PRO Mėnesinis"
                 elif interval == "year":
                     badge = "PRO Metinis"
                 else:
@@ -136,11 +136,11 @@ def _render_landing():
         url_trial = f"{STRIPE_API_BASE_URL}/create-checkout-session?plan=trial"
         st.link_button("Pradėti nemokamai 7 dienas", url=url_trial, type="primary", use_container_width=True)
     with col2:
-        st.markdown("#### Menešinis")
+        st.markdown("#### Mėnesinis")
         st.markdown("**19 EUR/men**")
         st.markdown("Neriboti maršrutai.")
         url_monthly = f"{STRIPE_API_BASE_URL}/create-checkout-session?plan=monthly"
-        st.link_button("Menešinis 19 EUR/men", url=url_monthly, use_container_width=True)
+        st.link_button("Mėnesinis 19 EUR/men", url=url_monthly, use_container_width=True)
     with col3:
         st.markdown("#### Metinis")
         st.markdown("**149 EUR/metus**")
