@@ -25,7 +25,7 @@ st.set_page_config(
 
 # Streamlit brendo paslėpimas + lang switcher (top-left, active border, dark inactive)
 def _inject_lang_switcher_css():
-    lang = st.session_state.get("lang", "LT")
+    lang = st.session_state.get("lang", "EN")
     # Target first column of first row (lang buttons); first button = LT, second = EN
     sel_first = '[data-testid="stHorizontalBlock"]:first-of-type [data-testid="column"]:first-of-type [data-testid="stHorizontalBlock"] [data-testid="column"]:first-of-type button'
     sel_second = '[data-testid="stHorizontalBlock"]:first-of-type [data-testid="column"]:first-of-type [data-testid="stHorizontalBlock"] [data-testid="column"]:last-of-type button'
@@ -62,15 +62,15 @@ BASE_URL = "https://atlas.microsoft.com"
 if "pending_redirect_url" not in st.session_state:
     st.session_state["pending_redirect_url"] = None
 if "lang" not in st.session_state:
-    st.session_state["lang"] = "LT"
+    st.session_state["lang"] = "EN"
 
 # ─────────────────────────────────────────────
 # Translations (LT / EN)
 # ─────────────────────────────────────────────
 
 def _t(key: str, **kwargs) -> str:
-    lang = st.session_state.get("lang", "LT")
-    s = _TEXTS.get(lang, _TEXTS["LT"]).get(key, key)
+    lang = st.session_state.get("lang", "EN")
+    s = _TEXTS.get(lang, _TEXTS["EN"]).get(key, key)
     return s.format(**kwargs) if kwargs else s
 
 _TEXTS = {
@@ -785,9 +785,9 @@ def _safe(text: str) -> str:
 
 def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
                  maut_total, grand_total, client_km, full_route_min,
-                 client_price_per_km, euro_class, lang: str = "LT",
+                 client_price_per_km, euro_class, lang: str = "EN",
                  static_map_png: bytes | None = None) -> bytes:
-    L = _TEXTS.get(lang, _TEXTS["LT"])
+    L = _TEXTS.get(lang, _TEXTS["EN"])
     date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     pdf_title = L["pdf_title"]
     pdf_subtitle = L["pdf_header_subtitle"].format(date=date_str, euro_class=euro_class, price=client_price_per_km)
@@ -1275,7 +1275,7 @@ if calculate and raw_text.strip():
             full_route_min=full_route["travel_time_min"],
             client_price_per_km=client_price_per_km,
             euro_class=euro_class,
-            lang=st.session_state.get("lang", "LT"),
+            lang=st.session_state.get("lang", "EN"),
             static_map_png=static_map_png,
         )
         fname = f"marsrutas_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
