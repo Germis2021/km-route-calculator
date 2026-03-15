@@ -173,6 +173,9 @@ _TEXTS = {
         "pdf_transport_eur": "Transport. suma EUR",
         "pdf_total_row": "VISO",
         "pdf_header_subtitle": "Sugeneruota: {date}  |  Euro klase: {euro_class}  |  Kaina/km: {price:.2f} EUR",
+        "pdf_nr": "Nr.",
+        "pdf_maut_note": "Euro klase: {euro_class}",
+        "pdf_client_km_diff": "skirtumas: {sign}{diff:.1f} km",
     },
     "EN": {
         "landing_description": "Paste addresses from Excel → get km by country, road tolls (Maut) and PDF report. A fast and simple tool for transport companies.",
@@ -274,6 +277,9 @@ _TEXTS = {
         "pdf_transport_eur": "Transport amount EUR",
         "pdf_total_row": "TOTAL",
         "pdf_header_subtitle": "Generated: {date}  |  Euro class: {euro_class}  |  Price/km: {price:.2f} EUR",
+        "pdf_nr": "No.",
+        "pdf_maut_note": "Euro class: {euro_class}",
+        "pdf_client_km_diff": "difference: {sign}{diff:.1f} km",
     },
 }
 
@@ -754,18 +760,18 @@ def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
     travel_h = int(full_route_min // 60)
     travel_m = int(full_route_min % 60)
 
-    grand_label = L["pdf_grand_total"] + ":"
+    grand_label = L["pdf_grand_total"]
     summary_items = [
         (L["pdf_total_km"], f"{total_km:.1f} km"),
         (L["pdf_duration"], f"{travel_h}h {travel_m}min"),
         (L["pdf_transport"], f"{transport_cost:.2f} EUR  ({client_price_per_km:.2f} EUR/km x {total_km:.1f} km)"),
-        (L["pdf_maut"], f"{maut_total:.2f} EUR  (Euro klase: {euro_class})"),
+        (L["pdf_maut"], f"{maut_total:.2f} EUR  ({L['pdf_maut_note'].format(euro_class=euro_class)})"),
         (grand_label, f"{grand_total:.2f} EUR"),
     ]
     if client_km > 0:
         diff = total_km - client_km
         sign = "+" if diff > 0 else ""
-        summary_items.insert(2, (L["pdf_client_km"] + ":", f"{client_km} km  (skirtumas: {sign}{diff:.1f} km)"))
+        summary_items.insert(2, (L["pdf_client_km"], f"{client_km} km  ({L['pdf_client_km_diff'].format(sign=sign, diff=diff)})"))
 
     for label, value in summary_items:
         is_total = label == grand_label
@@ -788,7 +794,7 @@ def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
     pdf.cell(0, 7, L["pdf_stops"], fill=True, new_x="LMARGIN", new_y="NEXT")
 
     col_w = [10, 85, 45, 35, 35]
-    headers = ["Nr.", L["pdf_address"], L["pdf_coords"], L["pdf_to_next"], L["pdf_cumulative"]]
+    headers = [L["pdf_nr"], L["pdf_address"], L["pdf_coords"], L["pdf_to_next"], L["pdf_cumulative"]]
 
     pdf.set_font("Helvetica", "B", 8)
     pdf.set_fill_color(210, 225, 245)
