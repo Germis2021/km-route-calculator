@@ -728,7 +728,7 @@ def get_azure_static_map(path_coords: list, width: int = 1024, height: int = 768
     path_str = "|".join(f"{lon} {lat}" for lon, lat in path_coords)
     path_param = f"lc4682B4|lw4|la0.8||{path_str}"  # blue line, width 4
     params = {
-        "api-version": "2024-04-01",
+        "api-version": "1.0",
         "subscription-key": AZURE_MAPS_KEY,
         "bbox": bbox,
         "width": width,
@@ -736,11 +736,12 @@ def get_azure_static_map(path_coords: list, width: int = 1024, height: int = 768
         "path": path_param,
     }
     try:
-        r = requests.get(f"{BASE_URL}/map/static", params=params, timeout=15)
+        r = requests.get(f"{BASE_URL}/map/static/png", params=params, timeout=15)
         if r.status_code == 200:
             return r.content
-    except Exception:
-        pass
+        print(f"[get_azure_static_map] HTTP {r.status_code}: {r.text[:500] if r.text else '(no body)'}")
+    except Exception as e:
+        print(f"[get_azure_static_map] Request failed: {e}")
     return None
 
 
