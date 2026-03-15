@@ -99,6 +99,11 @@ _TEXTS = {
         "yearly_desc": "Sutaupykite ~35%.",
         "btn_yearly": "Metinis 149 EUR/metus",
         "after_payment": "Po apmokėjimo būsite nukreipti atgal į programą.",
+        "continue_with_email": "Jau turite prenumeratą? Prisijunkite el. paštu",
+        "email_placeholder": "el. paštas",
+        "continue_btn": "Prisijungti",
+        "email_not_found": "Nerastas aktyvus abonementas šiuo el. paštu. Patikrinkite adresą arba įsigykite prenumeratą.",
+        "enter_email": "Įveskite el. paštą.",
         "footer_contact": "📧 Klausimams ir sąskaitoms faktūroms: vikteko@gmail.com",
         "error_stripe": "Nepavyko pradėti. Patikrinkite STRIPE_* kintamuosius.",
         "expired_title": "🗺️ RouteCalc",
@@ -195,6 +200,11 @@ _TEXTS = {
         "yearly_desc": "Save ~35%.",
         "btn_yearly": "Yearly 149 EUR/year",
         "after_payment": "After payment you will be redirected back to the app.",
+        "continue_with_email": "Already have a subscription? Continue with email",
+        "email_placeholder": "email",
+        "continue_btn": "Continue",
+        "email_not_found": "No active subscription found for this email. Check the address or purchase a plan.",
+        "enter_email": "Please enter your email.",
         "footer_contact": "📧 For inquiries and invoices: vikteko@gmail.com",
         "error_stripe": "Failed to start. Check STRIPE_* variables.",
         "expired_title": "🗺️ RouteCalc",
@@ -317,18 +327,31 @@ def _get_subscription_info(customer_id: str):
 
 
 def _handle_checkout_redirect():
-    """Iš URL ?session_id=... ištraukia customer_id ir išsaugo į session_state."""
+    """Iš URL ?session_id=... ištraukia customer_id, email ir subscription status; išsaugo į session_state."""
     session_id = st.query_params.get("session_id")
     if not session_id or not STRIPE_SECRET_KEY:
         return
     try:
         stripe.api_key = STRIPE_SECRET_KEY
-        session = stripe.checkout.Session.retrieve(session_id, expand=["customer"])
+        session = stripe.checkout.Session.retrieve(
+            session_id, expand=["customer", "subscription"]
+        )
         cid = session.get("customer")
         if isinstance(cid, dict):
             cid = cid.get("id")
         if cid:
             st.session_state["stripe_customer_id"] = cid
+            email = (session.get("customer_details") or {}).get("email")
+            if not email and isinstance(session.get("customer"), dict):
+                email = (session.get("customer") or {}).get("email")
+            if not email and cid:
+                cust = stripe.Customer.retrieve(cid)
+                email = getattr(cust, "email", None) or (cust.get("email") if isinstance(cust, dict) else None)
+            if email:
+                st.session_state["stripe_customer_email"] = email
+            sub = session.get("subscription")
+            if isinstance(sub, dict) and sub.get("status") in ("active", "trialing"):
+                st.session_state["subscription_status"] = sub.get("status")
     except stripe.StripeError:
         pass
 
@@ -387,6 +410,10 @@ def _is_subscribed_and_badge():
     """
     if "stripe_customer_id" not in st.session_state:
         st.session_state["stripe_customer_id"] = None
+    if "stripe_customer_email" not in st.session_state:
+        st.session_state["stripe_customer_email"] = None
+    if "subscription_status" not in st.session_state:
+        st.session_state["subscription_status"] = None
     if "routes_used" not in st.session_state:
         st.session_state["routes_used"] = 0
 
@@ -397,8 +424,29 @@ def _is_subscribed_and_badge():
 
     is_active, badge_key, badge_kwargs, sub = _get_subscription_info(customer_id)
     if is_active:
+        if sub and sub.get("status") in ("active", "trialing"):
+            st.session_state["subscription_status"] = sub.get("status")
         return True, badge_key, badge_kwargs, sub
     return False, None, None, None
+
+
+def _find_customer_by_email(email: str) -> tuple[str, str] | None:
+    """Returns (customer_id, email) if a Stripe customer with this email has an active/trialing subscription, else None."""
+    if not STRIPE_SECRET_KEY or not (email or "").strip():
+        return None
+    try:
+        stripe.api_key = STRIPE_SECRET_KEY
+        customers = stripe.Customer.list(email=email.strip(), limit=5)
+        for c in customers.get("data", []):
+            cid = c.get("id")
+            if not cid:
+                continue
+            is_active, _, _, _ = _get_subscription_info(cid)
+            if is_active:
+                return (cid, c.get("email") or email.strip())
+        return None
+    except stripe.StripeError:
+        return None
 
 
 def _render_landing():
@@ -419,6 +467,31 @@ def _render_landing():
     st.title(_t("landing_title"))
     st.markdown(_t("how_it_works"))
     st.caption(_t("disclaimer"))
+    st.divider()
+    st.markdown(f"**{_t('continue_with_email')}**")
+    email_col, btn_col = st.columns([2, 1])
+    with email_col:
+        login_email = st.text_input(
+            _t("email_placeholder"),
+            key="landing_email_input",
+            placeholder="you@example.com",
+            label_visibility="collapsed",
+        )
+    with btn_col:
+        st.write("")
+        st.write("")
+        if st.button(_t("continue_btn"), key="landing_continue_btn", use_container_width=True):
+            if login_email and login_email.strip():
+                result = _find_customer_by_email(login_email.strip())
+                if result:
+                    cid, em = result
+                    st.session_state["stripe_customer_id"] = cid
+                    st.session_state["stripe_customer_email"] = em
+                    st.rerun()
+                else:
+                    st.error(_t("email_not_found"))
+            else:
+                st.warning(_t("enter_email"))
     st.divider()
     st.subheader(_t("pricing"))
     col1, col2, col3 = st.columns(3)
