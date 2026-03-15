@@ -22,7 +22,20 @@ st.set_page_config(
     layout="wide",
 )
 
-# Streamlit brendo paslėpimas
+# Streamlit brendo paslėpimas + lang switcher (top-left, active border, dark inactive)
+def _inject_lang_switcher_css():
+    lang = st.session_state.get("lang", "LT")
+    # Target first column of first row (lang buttons); first button = LT, second = EN
+    sel_first = '[data-testid="stHorizontalBlock"]:first-of-type [data-testid="column"]:first-of-type [data-testid="stHorizontalBlock"] [data-testid="column"]:first-of-type button'
+    sel_second = '[data-testid="stHorizontalBlock"]:first-of-type [data-testid="column"]:first-of-type [data-testid="stHorizontalBlock"] [data-testid="column"]:last-of-type button'
+    active_style = "border: 2px solid #4a9eff !important; border-radius: 4px !important; background-color: #1e3a5f !important;"
+    inactive_style = "background-color: #262730 !important; color: #9ca3af !important; border: 1px solid #374151 !important;"
+    if lang == "LT":
+        css = f"{sel_first} {{{active_style}}} {sel_second} {{{inactive_style}}}"
+    else:
+        css = f"{sel_first} {{{inactive_style}}} {sel_second} {{{active_style}}}"
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+
 st.markdown("""
 <style>
 #MainMenu {visibility: hidden;}
@@ -44,9 +57,216 @@ STRIPE_PRICE_YEARLY = os.getenv("STRIPE_PRICE_YEARLY")
 TRIAL_ROUTE_LIMIT = 10
 BASE_URL = "https://atlas.microsoft.com"
 
-# Pending redirect (Stripe Checkout or Portal) – handle before any auth
+# Pending redirect and language (before any UI)
 if "pending_redirect_url" not in st.session_state:
     st.session_state["pending_redirect_url"] = None
+if "lang" not in st.session_state:
+    st.session_state["lang"] = "LT"
+
+# ─────────────────────────────────────────────
+# Translations (LT / EN)
+# ─────────────────────────────────────────────
+
+def _t(key: str, **kwargs) -> str:
+    lang = st.session_state.get("lang", "LT")
+    s = _TEXTS.get(lang, _TEXTS["LT"]).get(key, key)
+    return s.format(**kwargs) if kwargs else s
+
+_TEXTS = {
+    "LT": {
+        "landing_description": "Įklijuokite adresus iš Excel → gaukite km pagal šalis, kelių mokesčius (Maut) ir PDF ataskaitą. Greitas ir paprastas įrankis transporto įmonėms.",
+        "how_it_works": (
+            "📋 **Kaip tai veikia?**\n\n"
+            "Transporto įmonėse dažnai tenka tikrinti klientų pateiktus reisų atsiskaitymus. "
+            "Tradiciškai tai reiškia — kiekvienas adresas suvedamas į Google Maps rankiniu būdu, km dauginami iš kainos, "
+            "skaičiuojami kelių mokesčiai... ir visa tai kiekvienam reisui atskirai.\n\n"
+            "RouteCalc leidžia tiesiog nukopijuoti adresų eilutę iš Excel ir per sekundes gauti: km pagal šalis, "
+            "Maut kelių mokesčius pagal vilkiko Euro klasę ir PDF ataskaitą palyginimui su kliento credit note."
+        ),
+        "disclaimer": "⚠️ Atstumai skaičiuojami pagal žemėlapių duomenis. Galimi nedideli nukrypimai (~1-3%) dėl maršruto optimizavimo skirtumų.",
+        "landing_title": "🗺️ RouteCalc – Maršruto KM skaičiuoklė",
+        "pricing": "Kainodara",
+        "trial_plan": "Nemokamas bandymas",
+        "trial_days": "7 dienos",
+        "trial_desc": "Pilna prieiga, 10 maršrutų limitas.",
+        "btn_trial": "Pradėti nemokamai 7 dienas",
+        "monthly_plan": "Mėnesinis",
+        "monthly_price": "19 EUR/men",
+        "monthly_desc": "Neriboti maršrutai.",
+        "btn_monthly": "Mėnesinis 19 EUR/men",
+        "yearly_plan": "Metinis",
+        "yearly_price": "149 EUR/metus",
+        "yearly_desc": "Sutaupykite ~35%.",
+        "btn_yearly": "Metinis 149 EUR/metus",
+        "after_payment": "Po apmokėjimo būsite nukreipti atgal į programą.",
+        "footer_contact": "📧 Klausimams ir sąskaitoms faktūroms: vikteko@gmail.com",
+        "error_stripe": "Nepavyko pradėti. Patikrinkite STRIPE_* kintamuosius.",
+        "expired_title": "🗺️ RouteCalc",
+        "expired_warning": "Prenumerata pasibaigė.",
+        "btn_manage_expired": "Valdyti prenumeratą (atnaujinti, pakeisti planą)",
+        "error_portal": "Nepavyko atidaryti portalo.",
+        "redirecting": "Nukreipiama į mokėjimą...",
+        "trial_days_left": "Trial: {days_left} dienų liko",
+        "pro_monthly": "PRO Mėnesinis",
+        "pro_yearly": "PRO Metinis",
+        "routes_used": "Maršrutų naudota: {used}/{limit}",
+        "btn_manage": "Valdyti prenumeratą",
+        "main_title": "🗺️ Maršruto KM Skaičiuoklė",
+        "main_caption": "Įklijuokite adresus → km pagal šalis → transporto ir kelių mokesčių skaičiavimas",
+        "azure_error": "⚠️ AZURE_MAPS_KEY nenustatytas.",
+        "trial_limit_msg": "Išnaudojote {limit} nemokamus maršrutus. Atnaujinkite į Pro.",
+        "btn_upgrade": "Atnaujinti į Pro",
+        "addresses_label": "📋 Adresai – po vieną per eilutę arba visa Excel eilutė (Tab atskirti)",
+        "client_price_label": "💶 Kliento kaina (EUR/km)",
+        "client_price_help": "Kliento mokama kaina už 1 km",
+        "euro_class_label": "🚛 Vilkiko Euro klasė",
+        "euro_class_help": "Euro 6 = mažiausi kelių mokesčiai",
+        "client_km_label": "📄 Kliento nurodyti km (palyginimui)",
+        "btn_calculate": "🧮 Skaičiuoti",
+        "need_two": "Reikia bent 2 adresų.",
+        "geocoding": "📍 Geocoding adresai...",
+        "geocoding_done": "✅ Geocoding baigtas",
+        "not_found": "⚠️ Nerastas: {addr}",
+        "not_enough": "Nepakanka rastų adresų.",
+        "route_spinner": "🛣️ Skaičiuojamas maršrutas...",
+        "route_error": "Nepavyko gauti maršruto iš Azure Maps.",
+        "segment_spinner": "📏 Skaičiuojami tarpiniai atstumai...",
+        "country_spinner": "🌍 Skirstoma pagal šalis...",
+        "stops_table": "📊 Stotelių lentelė",
+        "total_km": "📏 Iš viso km",
+        "duration": "⏱️ Trukmė",
+        "diff_client": "📐 Skirtumas nuo kliento",
+        "km_client": "{km} km kliento",
+        "country_maut": "🌍 KM pagal šalis ir kelių mokesčiai ({euro_class})",
+        "transport_sum": "🚛 Transporto suma",
+        "maut_sum": "🛣️ Kelių mokesčiai (Maut)",
+        "grand_total": "💰 BENDRA SUMA",
+        "client_km_sum": "📄 Kliento km suma",
+        "map_header": "🗺️ Maršrutas žemėlapyje",
+        "report_header": "📥 Ataskaita",
+        "btn_download_pdf": "📄 Atsisiųsti PDF ataskaitą",
+        "pdf_error": "PDF generavimo klaida: {e}",
+        "pdf_title": "Marsruto KM Ataskaita",
+        "pdf_page": "Puslapis",
+        "pdf_summary": "SUVESTINE",
+        "pdf_stops": "STOTELIU LENTELE",
+        "pdf_country_maut": "KM PAGAL SALIS IR KELIU MOKESCIAI",
+        "pdf_total_km": "Is viso km (keliais):",
+        "pdf_duration": "Trukme:",
+        "pdf_transport": "Transporto suma:",
+        "pdf_maut": "Keliu mokesciai (Maut):",
+        "pdf_grand_total": "BENDRA SUMA:",
+        "pdf_client_km": "Kliento km:",
+        "pdf_address": "Adresas",
+        "pdf_coords": "Koordinates",
+        "pdf_to_next": "Iki sekancio (km)",
+        "pdf_cumulative": "Kaupiamasis (km)",
+        "pdf_country": "Salis",
+        "pdf_km": "KM",
+        "pdf_maut_km": "Maut EUR/km",
+        "pdf_maut_eur": "Maut suma EUR",
+        "pdf_transport_eur": "Transport. suma EUR",
+        "pdf_total_row": "VISO",
+        "pdf_header_subtitle": "Sugeneruota: {date}  |  Euro klase: {euro_class}  |  Kaina/km: {price:.2f} EUR",
+    },
+    "EN": {
+        "landing_description": "Paste addresses from Excel → get km by country, road tolls (Maut) and PDF report. A fast and simple tool for transport companies.",
+        "how_it_works": (
+            "📋 **How it works?**\n\n"
+            "Transport companies often need to verify client freight invoices. "
+            "Traditionally this means — manually entering each address into Google Maps, multiplying km by rate, "
+            "calculating road tolls... for every single trip.\n\n"
+            "RouteCalc lets you simply copy-paste an address line from Excel and instantly get: km by country, "
+            "Maut road tolls by truck Euro class, and a PDF report to compare against client credit note."
+        ),
+        "disclaimer": "⚠️ Distances are calculated based on map data. Minor deviations (~1-3%) may occur due to routing differences.",
+        "landing_title": "🗺️ RouteCalc – Route KM Calculator",
+        "pricing": "Pricing",
+        "trial_plan": "Free trial",
+        "trial_days": "7 days",
+        "trial_desc": "Full access, 10 routes limit.",
+        "btn_trial": "Start free 7-day trial",
+        "monthly_plan": "Monthly",
+        "monthly_price": "19 EUR/mo",
+        "monthly_desc": "Unlimited routes.",
+        "btn_monthly": "Monthly 19 EUR/mo",
+        "yearly_plan": "Yearly",
+        "yearly_price": "149 EUR/year",
+        "yearly_desc": "Save ~35%.",
+        "btn_yearly": "Yearly 149 EUR/year",
+        "after_payment": "After payment you will be redirected back to the app.",
+        "footer_contact": "📧 For inquiries and invoices: vikteko@gmail.com",
+        "error_stripe": "Failed to start. Check STRIPE_* variables.",
+        "expired_title": "🗺️ RouteCalc",
+        "expired_warning": "Subscription expired.",
+        "btn_manage_expired": "Manage subscription (renew, change plan)",
+        "error_portal": "Failed to open portal.",
+        "redirecting": "Redirecting to payment...",
+        "trial_days_left": "Trial: {days_left} days left",
+        "pro_monthly": "PRO Monthly",
+        "pro_yearly": "PRO Yearly",
+        "routes_used": "Routes used: {used}/{limit}",
+        "btn_manage": "Manage subscription",
+        "main_title": "🗺️ Route KM Calculator",
+        "main_caption": "Paste addresses → km by country → transport and road toll calculation",
+        "azure_error": "⚠️ AZURE_MAPS_KEY not set.",
+        "trial_limit_msg": "You have used {limit} free routes. Upgrade to Pro.",
+        "btn_upgrade": "Upgrade to Pro",
+        "addresses_label": "📋 Addresses – one per line or full Excel row (Tab separated)",
+        "client_price_label": "💶 Client price (EUR/km)",
+        "client_price_help": "Price per km paid by client",
+        "euro_class_label": "🚛 Truck Euro class",
+        "euro_class_help": "Euro 6 = lowest road tolls",
+        "client_km_label": "📄 Client stated km (for comparison)",
+        "btn_calculate": "🧮 Calculate",
+        "need_two": "At least 2 addresses required.",
+        "geocoding": "📍 Geocoding addresses...",
+        "geocoding_done": "✅ Geocoding complete",
+        "not_found": "⚠️ Not found: {addr}",
+        "not_enough": "Not enough addresses found.",
+        "route_spinner": "🛣️ Calculating route...",
+        "route_error": "Failed to get route from Azure Maps.",
+        "segment_spinner": "📏 Calculating segment distances...",
+        "country_spinner": "🌍 Splitting by country...",
+        "stops_table": "📊 Stops table",
+        "total_km": "📏 Total km",
+        "duration": "⏱️ Duration",
+        "diff_client": "📐 Difference from client",
+        "km_client": "{km} km client",
+        "country_maut": "🌍 KM by country and road tolls ({euro_class})",
+        "transport_sum": "🚛 Transport cost",
+        "maut_sum": "🛣️ Road tolls (Maut)",
+        "grand_total": "💰 TOTAL",
+        "client_km_sum": "📄 Client km total",
+        "map_header": "🗺️ Route on map",
+        "report_header": "📥 Report",
+        "btn_download_pdf": "📄 Download PDF report",
+        "pdf_error": "PDF generation error: {e}",
+        "pdf_title": "Route KM Report",
+        "pdf_page": "Page",
+        "pdf_summary": "SUMMARY",
+        "pdf_stops": "STOPS TABLE",
+        "pdf_country_maut": "KM BY COUNTRY AND ROAD TOLLS",
+        "pdf_total_km": "Total km (by road):",
+        "pdf_duration": "Duration:",
+        "pdf_transport": "Transport cost:",
+        "pdf_maut": "Road tolls (Maut):",
+        "pdf_grand_total": "TOTAL:",
+        "pdf_client_km": "Client km:",
+        "pdf_address": "Address",
+        "pdf_coords": "Coordinates",
+        "pdf_to_next": "To next (km)",
+        "pdf_cumulative": "Cumulative (km)",
+        "pdf_country": "Country",
+        "pdf_km": "KM",
+        "pdf_maut_km": "Maut EUR/km",
+        "pdf_maut_eur": "Maut amount EUR",
+        "pdf_transport_eur": "Transport amount EUR",
+        "pdf_total_row": "TOTAL",
+        "pdf_header_subtitle": "Generated: {date}  |  Euro class: {euro_class}  |  Price/km: {price:.2f} EUR",
+    },
+}
+
 if st.session_state.get("pending_redirect_url"):
     url = st.session_state["pending_redirect_url"]
     st.session_state["pending_redirect_url"] = None
@@ -54,7 +274,7 @@ if st.session_state.get("pending_redirect_url"):
         f'<meta http-equiv="refresh" content="0;url={url}"/>',
         unsafe_allow_html=True,
     )
-    st.info("Nukreipiama į mokėjimą...")
+    st.info(_t("redirecting"))
     st.stop()
 
 # ─────────────────────────────────────────────
@@ -62,9 +282,9 @@ if st.session_state.get("pending_redirect_url"):
 # ─────────────────────────────────────────────
 
 def _get_subscription_info(customer_id: str):
-    """Grąžina subscription statusą ir planą iš Stripe. Return: (is_active, badge_text, subscription_obj|None)."""
+    """Returns (is_active, badge_key, badge_kwargs, subscription_obj|None). Badge is built in UI with _t(badge_key, **badge_kwargs)."""
     if not STRIPE_SECRET_KEY or not customer_id:
-        return False, None, None
+        return False, None, None, None
     try:
         stripe.api_key = STRIPE_SECRET_KEY
         subs = stripe.Subscription.list(
@@ -75,7 +295,6 @@ def _get_subscription_info(customer_id: str):
         )
         for sub in subs.get("data", []):
             if sub["status"] in ("active", "trialing"):
-                # Plan badge: Trial / PRO Menesinis / PRO Metinis
                 trial_end = sub.get("trial_end")
                 interval = None
                 for item in sub.get("items", {}).get("data", []):
@@ -85,19 +304,16 @@ def _get_subscription_info(customer_id: str):
                     break
                 if sub["status"] == "trialing" and trial_end:
                     end = datetime.datetime.utcfromtimestamp(trial_end).date()
-                    days_left = (end - datetime.datetime.utcnow().date()).days
-                    days_left = max(0, days_left)
-                    badge = f"Trial: {days_left} dienų liko"
-                elif interval == "month":
-                    badge = "PRO Mėnesinis"
-                elif interval == "year":
-                    badge = "PRO Metinis"
-                else:
-                    badge = "PRO"
-                return True, badge, sub
-        return False, None, None
+                    days_left = max(0, (end - datetime.datetime.utcnow().date()).days)
+                    return True, "trial_days_left", {"days_left": days_left}, sub
+                if interval == "month":
+                    return True, "pro_monthly", {}, sub
+                if interval == "year":
+                    return True, "pro_yearly", {}, sub
+                return True, "pro_monthly", {}, sub  # fallback
+        return False, None, None, None
     except stripe.StripeError:
-        return False, None, None
+        return False, None, None, None
 
 
 def _handle_checkout_redirect():
@@ -176,69 +392,83 @@ def _is_subscribed_and_badge():
     _handle_checkout_redirect()
     customer_id = st.session_state.get("stripe_customer_id")
     if not customer_id:
-        return False, None, None
+        return False, None, None, None
 
-    is_active, badge, sub = _get_subscription_info(customer_id)
+    is_active, badge_key, badge_kwargs, sub = _get_subscription_info(customer_id)
     if is_active:
-        return True, badge, sub
-    return False, None, None
+        return True, badge_key, badge_kwargs, sub
+    return False, None, None, None
 
 
 def _render_landing():
-    """Landing puslapis su kainodara ir trimis mygtukais."""
-    st.title("🗺️ RouteCalc – Maršruto KM skaičiuoklė")
-    st.markdown("Skaičiuokite maršruto km pagal šalis, transporto ir kelių mokesčius (Maut).")
+    """Landing page with language switcher, description, disclaimer and pricing."""
+    # Language switcher top left
+    lang_col, _ = st.columns([1, 5])
+    with lang_col:
+        lt_btn, en_btn = st.columns(2)
+        with lt_btn:
+            if st.button("LT", key="lang_lt", use_container_width=True):
+                st.session_state["lang"] = "LT"
+                st.rerun()
+        with en_btn:
+            if st.button("EN", key="lang_en", use_container_width=True):
+                st.session_state["lang"] = "EN"
+                st.rerun()
+    _inject_lang_switcher_css()
+    st.title(_t("landing_title"))
+    st.markdown(_t("how_it_works"))
+    st.caption(_t("disclaimer"))
     st.divider()
-    st.subheader("Kainodara")
+    st.subheader(_t("pricing"))
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.markdown("#### Nemokamas bandymas")
-        st.markdown("**7 dienos**")
-        st.markdown("Pilna prieiga, 10 maršrutų limitas.")
-        if st.button("Pradėti nemokamai 7 dienas", type="primary", key="btn_trial", use_container_width=True):
+        st.markdown(f"#### {_t('trial_plan')}")
+        st.markdown(f"**{_t('trial_days')}**")
+        st.markdown(_t("trial_desc"))
+        if st.button(_t("btn_trial"), type="primary", key="btn_trial", use_container_width=True):
             url = _create_checkout_session("trial")
             if url:
                 st.session_state["pending_redirect_url"] = url
                 st.rerun()
             else:
-                st.error("Nepavyko pradėti. Patikrinkite STRIPE_* kintamuosius.")
+                st.error(_t("error_stripe"))
     with col2:
-        st.markdown("#### Mėnesinis")
-        st.markdown("**19 EUR/men**")
-        st.markdown("Neriboti maršrutai.")
-        if st.button("Mėnesinis 19 EUR/men", key="btn_monthly", use_container_width=True):
+        st.markdown(f"#### {_t('monthly_plan')}")
+        st.markdown(f"**{_t('monthly_price')}**")
+        st.markdown(_t("monthly_desc"))
+        if st.button(_t("btn_monthly"), key="btn_monthly", use_container_width=True):
             url = _create_checkout_session("monthly")
             if url:
                 st.session_state["pending_redirect_url"] = url
                 st.rerun()
             else:
-                st.error("Nepavyko pradėti. Patikrinkite STRIPE_* kintamuosius.")
+                st.error(_t("error_stripe"))
     with col3:
-        st.markdown("#### Metinis")
-        st.markdown("**149 EUR/metus**")
-        st.markdown("Sutaupykite ~35%.")
-        if st.button("Metinis 149 EUR/metus", key="btn_yearly", use_container_width=True):
+        st.markdown(f"#### {_t('yearly_plan')}")
+        st.markdown(f"**{_t('yearly_price')}**")
+        st.markdown(_t("yearly_desc"))
+        if st.button(_t("btn_yearly"), key="btn_yearly", use_container_width=True):
             url = _create_checkout_session("yearly")
             if url:
                 st.session_state["pending_redirect_url"] = url
                 st.rerun()
             else:
-                st.error("Nepavyko pradėti. Patikrinkite STRIPE_* kintamuosius.")
+                st.error(_t("error_stripe"))
     st.divider()
-    st.caption("Po apmokėjimo būsite nukreipti atgal į programą.")
+    st.caption(_t("after_payment"))
 
 
 def _render_subscription_expired(customer_id: str):
-    """Prenumerata pasibaigė – rodyti portal nuorodą."""
-    st.title("🗺️ RouteCalc")
-    st.warning("Prenumerata pasibaigė.")
-    if st.button("Valdyti prenumeratą (atnaujinti, pakeisti planą)", type="primary", key="btn_portal_expired"):
+    """Subscription expired – show portal button."""
+    st.title(_t("expired_title"))
+    st.warning(_t("expired_warning"))
+    if st.button(_t("btn_manage_expired"), type="primary", key="btn_portal_expired"):
         url = _create_portal_session(customer_id)
         if url:
             st.session_state["pending_redirect_url"] = url
             st.rerun()
         else:
-            st.error("Nepavyko atidaryti portalo.")
+            st.error(_t("error_portal"))
     st.stop()
 
 
@@ -412,24 +642,29 @@ def _safe(text: str) -> str:
 
 def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
                  maut_total, grand_total, client_km, full_route_min,
-                 client_price_per_km, euro_class) -> bytes:
+                 client_price_per_km, euro_class, lang: str = "LT") -> bytes:
+    L = _TEXTS.get(lang, _TEXTS["LT"])
+    date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    pdf_title = L["pdf_title"]
+    pdf_subtitle = L["pdf_header_subtitle"].format(date=date_str, euro_class=euro_class, price=client_price_per_km)
+    pdf_page_label = L["pdf_page"]
 
     class PDF(FPDF):
         def header(self):
             self.set_font("Helvetica", "B", 13)
             self.set_fill_color(40, 80, 150)
             self.set_text_color(255, 255, 255)
-            self.cell(0, 10, "Marsruto KM Ataskaita", align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
+            self.cell(0, 10, _safe(pdf_title), align="C", fill=True, new_x="LMARGIN", new_y="NEXT")
             self.set_text_color(0, 0, 0)
             self.set_font("Helvetica", "", 8)
-            self.cell(0, 6, f"Sugeneruota: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}  |  Euro klase: {euro_class}  |  Kaina/km: {client_price_per_km:.2f} EUR", new_x="LMARGIN", new_y="NEXT")
+            self.cell(0, 6, _safe(pdf_subtitle), new_x="LMARGIN", new_y="NEXT")
             self.ln(2)
 
         def footer(self):
             self.set_y(-12)
             self.set_font("Helvetica", "I", 8)
             self.set_text_color(130, 130, 130)
-            self.cell(0, 10, f"Puslapis {self.page_no()}", align="C")
+            self.cell(0, 10, f"{_safe(pdf_page_label)} {self.page_no()}", align="C")
 
     pdf = PDF(orientation="L", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
@@ -440,25 +675,26 @@ def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
     # ── Suvestinė ──
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_fill_color(230, 240, 255)
-    pdf.cell(0, 7, "SUVESTINE", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, L["pdf_summary"], fill=True, new_x="LMARGIN", new_y="NEXT")
 
     travel_h = int(full_route_min // 60)
     travel_m = int(full_route_min % 60)
 
+    grand_label = L["pdf_grand_total"] + ":"
     summary_items = [
-        ("Is viso km (keliais):", f"{total_km:.1f} km"),
-        ("Trukme:", f"{travel_h}h {travel_m}min"),
-        ("Transporto suma:", f"{transport_cost:.2f} EUR  ({client_price_per_km:.2f} EUR/km x {total_km:.1f} km)"),
-        ("Keliu mokesciai (Maut):", f"{maut_total:.2f} EUR  (Euro klase: {euro_class})"),
-        ("BENDRA SUMA:", f"{grand_total:.2f} EUR"),
+        (L["pdf_total_km"], f"{total_km:.1f} km"),
+        (L["pdf_duration"], f"{travel_h}h {travel_m}min"),
+        (L["pdf_transport"], f"{transport_cost:.2f} EUR  ({client_price_per_km:.2f} EUR/km x {total_km:.1f} km)"),
+        (L["pdf_maut"], f"{maut_total:.2f} EUR  (Euro klase: {euro_class})"),
+        (grand_label, f"{grand_total:.2f} EUR"),
     ]
     if client_km > 0:
         diff = total_km - client_km
         sign = "+" if diff > 0 else ""
-        summary_items.insert(2, ("Kliento km:", f"{client_km} km  (skirtumas: {sign}{diff:.1f} km)"))
+        summary_items.insert(2, (L["pdf_client_km"] + ":", f"{client_km} km  (skirtumas: {sign}{diff:.1f} km)"))
 
     for label, value in summary_items:
-        is_total = label == "BENDRA SUMA:"
+        is_total = label == grand_label
         pdf.set_font("Helvetica", "B" if is_total else "B", 9)
         if is_total:
             pdf.set_fill_color(210, 230, 210)
@@ -475,10 +711,10 @@ def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
     # ── Stotelių lentelė ──
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_fill_color(230, 240, 255)
-    pdf.cell(0, 7, "STOTELIU LENTELE", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, L["pdf_stops"], fill=True, new_x="LMARGIN", new_y="NEXT")
 
     col_w = [10, 85, 45, 35, 35]
-    headers = ["Nr.", "Adresas", "Koordinates", "Iki sekancio (km)", "Kaupiamasis (km)"]
+    headers = ["Nr.", L["pdf_address"], L["pdf_coords"], L["pdf_to_next"], L["pdf_cumulative"]]
 
     pdf.set_font("Helvetica", "B", 8)
     pdf.set_fill_color(210, 225, 245)
@@ -506,10 +742,10 @@ def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
     # ── Šalių + Maut lentelė ──
     pdf.set_font("Helvetica", "B", 10)
     pdf.set_fill_color(230, 240, 255)
-    pdf.cell(0, 7, f"KM PAGAL SALIS IR KELIU MOKESCIAI ({euro_class})", fill=True, new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 7, f"{L['pdf_country_maut']} ({euro_class})", fill=True, new_x="LMARGIN", new_y="NEXT")
 
     cc_col_w = [35, 30, 30, 30, 30]
-    cc_headers = ["Salis", "KM", "Maut EUR/km", "Maut suma EUR", "Transport. suma EUR"]
+    cc_headers = [L["pdf_country"], L["pdf_km"], L["pdf_maut_km"], L["pdf_maut_eur"], L["pdf_transport_eur"]]
 
     pdf.set_font("Helvetica", "B", 8)
     pdf.set_fill_color(210, 225, 245)
@@ -523,7 +759,7 @@ def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
         is_total = str(row.get("total_row", False))
         pdf.set_fill_color(220, 230, 245) if row.get("total_row") else (pdf.set_fill_color(245, 249, 255) if fill_row else pdf.set_fill_color(255, 255, 255))
         pdf.set_font("Helvetica", "B" if row.get("total_row") else "", 8)
-        cc_label = _safe(str(row["Salis"]).encode("ascii","ignore").decode())
+        cc_label = _safe((L["pdf_total_row"] if row.get("total_row") else str(row["Salis"])).encode("ascii", "ignore").decode())
         pdf.cell(cc_col_w[0], 5.5, cc_label, border=1, fill=True, align="C")
         pdf.cell(cc_col_w[1], 5.5, _safe(row["KM"]), border=1, fill=True, align="C")
         pdf.cell(cc_col_w[2], 5.5, _safe(row["Maut EUR/km"]), border=1, fill=True, align="C")
@@ -584,7 +820,7 @@ def parse_addresses(text: str) -> list:
 # UI
 # ─────────────────────────────────────────────
 
-show_calc, plan_badge, subscription_obj = _is_subscribed_and_badge()
+show_calc, badge_key, badge_kwargs, subscription_obj = _is_subscribed_and_badge()
 customer_id = st.session_state.get("stripe_customer_id")
 
 if not show_calc and customer_id:
@@ -596,6 +832,7 @@ if not show_calc:
 
 is_trial = subscription_obj and subscription_obj.get("status") == "trialing"
 routes_used = st.session_state.get("routes_used", 0)
+plan_badge = _t(badge_key, **badge_kwargs) if badge_key else None
 
 # ── Prenumerata aktyvi: rodyti kalkuliatorių ──
 if plan_badge:
@@ -603,33 +840,46 @@ if plan_badge:
     with badge_col:
         st.markdown(f"**{plan_badge}**")
         if is_trial:
-            st.caption(f"Maršrutų naudota: {routes_used}/{TRIAL_ROUTE_LIMIT}")
+            st.caption(_t("routes_used", used=routes_used, limit=TRIAL_ROUTE_LIMIT))
     with portal_col:
-        if st.button("Valdyti prenumeratą", key="btn_portal", use_container_width=True):
+        if st.button(_t("btn_manage"), key="btn_portal", use_container_width=True):
             url = _create_portal_session(customer_id)
             if url:
                 st.session_state["pending_redirect_url"] = url
                 st.rerun()
             else:
-                st.error("Nepavyko atidaryti portalo.")
+                st.error(_t("error_portal"))
 
-st.title("🗺️ Maršruto KM Skaičiuoklė")
-st.caption("Įklijuokite adresus → km pagal šalis → transporto ir kelių mokesčių skaičiavimas")
+# Language switcher (calculator view) top left
+lang_calc, _ = st.columns([1, 5])
+with lang_calc:
+    lt_c, en_c = st.columns(2)
+    with lt_c:
+        if st.button("LT", key="lang_lt_calc", use_container_width=True):
+            st.session_state["lang"] = "LT"
+            st.rerun()
+    with en_c:
+        if st.button("EN", key="lang_en_calc", use_container_width=True):
+            st.session_state["lang"] = "EN"
+            st.rerun()
+_inject_lang_switcher_css()
+st.title(_t("main_title"))
+st.caption(_t("main_caption"))
 
 if not AZURE_MAPS_KEY:
-    st.error("⚠️ AZURE_MAPS_KEY nenustatytas.")
+    st.error(_t("azure_error"))
     st.stop()
 
-# Trial limitas: max 10 maršrutų
+# Trial limitas
 if is_trial and routes_used >= TRIAL_ROUTE_LIMIT:
-    st.error(f"Išnaudojote {TRIAL_ROUTE_LIMIT} nemokamus maršrutus. Atnaujinkite į Pro.")
-    if st.button("Atnaujinti į Pro", type="primary", key="btn_upgrade"):
+    st.error(_t("trial_limit_msg", limit=TRIAL_ROUTE_LIMIT))
+    if st.button(_t("btn_upgrade"), type="primary", key="btn_upgrade"):
         url = _create_portal_session(customer_id)
         if url:
             st.session_state["pending_redirect_url"] = url
             st.rerun()
         else:
-            st.error("Nepavyko atidaryti portalo.")
+            st.error(_t("error_portal"))
     st.stop()
 
 # ── Įvestis ──
@@ -637,7 +887,7 @@ col_input, col_right = st.columns([3, 1])
 
 with col_input:
     raw_text = st.text_area(
-        "📋 Adresai – po vieną per eilutę arba visa Excel eilutė (Tab atskirti)",
+        _t("addresses_label"),
         height=180,
         placeholder=(
             "Hamburg, Germany\n"
@@ -651,22 +901,22 @@ with col_input:
 
 with col_right:
     client_price_per_km = st.number_input(
-        "💶 Kliento kaina (EUR/km)",
+        _t("client_price_label"),
         min_value=0.0,
         value=1.16,
         step=0.01,
         format="%.2f",
-        help="Kliento mokama kaina už 1 km",
+        help=_t("client_price_help"),
     )
     euro_class = st.selectbox(
-        "🚛 Vilkiko Euro klasė",
+        _t("euro_class_label"),
         options=EURO_CLASSES,
         index=0,
-        help="Euro 6 = mažiausi kelių mokesčiai",
+        help=_t("euro_class_help"),
     )
-    client_km = st.number_input("📄 Kliento nurodyti km (palyginimui)", min_value=0, value=0, step=10)
+    client_km = st.number_input(_t("client_km_label"), min_value=0, value=0, step=10)
     st.write("")
-    calculate = st.button("🧮 Skaičiuoti", type="primary", use_container_width=True)
+    calculate = st.button(_t("btn_calculate"), type="primary", use_container_width=True)
 
 st.divider()
 
@@ -675,33 +925,33 @@ if calculate and raw_text.strip():
     addresses = parse_addresses(raw_text)
 
     if len(addresses) < 2:
-        st.warning("Reikia bent 2 adresų.")
+        st.warning(_t("need_two"))
         st.stop()
 
     # 1. Geocoding
-    with st.status("📍 Geocoding adresai...", expanded=True) as status:
+    with st.status(_t("geocoding"), expanded=True) as status:
         geocode_results = []
         for addr in addresses:
             st.write(f"🔍 {addr}")
             result = geocode(addr)
             geocode_results.append((addr, result))
             if not result:
-                st.warning(f"⚠️ Nerastas: {addr}")
-        status.update(label="✅ Geocoding baigtas", state="complete")
+                st.warning(_t("not_found", addr=addr))
+        status.update(label=_t("geocoding_done"), state="complete")
 
     valid_pairs = [(addr, r) for addr, r in geocode_results if r is not None]
     if len(valid_pairs) < 2:
-        st.error("Nepakanka rastų adresų.")
+        st.error(_t("not_enough"))
         st.stop()
 
     all_coords = [r for _, r in valid_pairs]
 
     # 2. Pilnas maršrutas
-    with st.spinner("🛣️ Skaičiuojamas maršrutas..."):
+    with st.spinner(_t("route_spinner")):
         full_route = route_distance(all_coords)
 
     if not full_route:
-        st.error("Nepavyko gauti maršruto iš Azure Maps.")
+        st.error(_t("route_error"))
         st.stop()
 
     if is_trial:
@@ -711,7 +961,7 @@ if calculate and raw_text.strip():
     path_coords = full_route["path_coords"]
 
     # 3. Segmentų atstumai
-    with st.spinner("📏 Skaičiuojami tarpiniai atstumai..."):
+    with st.spinner(_t("segment_spinner")):
         seg_rows = []
         cumulative = 0.0
         for i in range(len(valid_pairs)):
@@ -728,7 +978,7 @@ if calculate and raw_text.strip():
             })
 
     # 4. KM pagal šalis
-    with st.spinner("🌍 Skirstoma pagal šalis..."):
+    with st.spinner(_t("country_spinner")):
         country_km_raw = km_by_country(path_coords, sample_every=5)
 
     raw_total = sum(country_km_raw.values())
@@ -773,37 +1023,40 @@ if calculate and raw_text.strip():
 
     # ── Rezultatai ──
     st.divider()
-    st.markdown("### 📊 Stotelių lentelė")
+    st.markdown(f"### {_t('stops_table')}")
     st.dataframe(pd.DataFrame(seg_rows), hide_index=True, use_container_width=True)
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("📏 Iš viso km", f"{total_km:.1f} km")
-    m2.metric("⏱️ Trukmė", f"{int(full_route['travel_time_min']//60)}h {int(full_route['travel_time_min']%60)}min")
+    m1.metric(_t("total_km"), f"{total_km:.1f} km")
+    m2.metric(_t("duration"), f"{int(full_route['travel_time_min']//60)}h {int(full_route['travel_time_min']%60)}min")
     if client_km > 0:
         diff = total_km - client_km
         sign = "+" if diff > 0 else ""
-        m3.metric("📐 Skirtumas nuo kliento", f"{sign}{diff:.1f} km", delta=f"{client_km} km kliento", delta_color="off")
+        m3.metric(_t("diff_client"), f"{sign}{diff:.1f} km", delta=_t("km_client", km=client_km), delta_color="off")
 
     st.divider()
-    st.markdown(f"### 🌍 KM pagal šalis ir kelių mokesčiai ({euro_class})")
+    st.markdown(f"### {_t('country_maut', euro_class=euro_class)}")
 
-    display_rows = [{k: v for k, v in r.items() if k != "total_row"} for r in maut_rows]
+    display_rows = [
+        {k: (_t("pdf_total_row") if k == "Salis" and r.get("total_row") else v) for k, v in r.items() if k != "total_row"}
+        for r in maut_rows
+    ]
     st.dataframe(pd.DataFrame(display_rows), hide_index=True, use_container_width=True)
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("🚛 Transporto suma", f"{transport_cost:.2f} EUR",
+    c1.metric(_t("transport_sum"), f"{transport_cost:.2f} EUR",
               help=f"{client_price_per_km:.2f} EUR/km × {total_km:.1f} km")
-    c2.metric("🛣️ Kelių mokesčiai (Maut)", f"{maut_total:.2f} EUR",
-              help=f"Pagal {euro_class}")
-    c3.metric("💰 BENDRA SUMA", f"{grand_total:.2f} EUR")
+    c2.metric(_t("maut_sum"), f"{maut_total:.2f} EUR",
+              help=f"{euro_class}")
+    c3.metric(_t("grand_total"), f"{grand_total:.2f} EUR")
     if client_km > 0:
         client_transport = round(client_km * client_price_per_km, 2)
-        c4.metric("📄 Kliento km suma", f"{client_transport:.2f} EUR",
+        c4.metric(_t("client_km_sum"), f"{client_transport:.2f} EUR",
                   help=f"{client_km} km × {client_price_per_km:.2f} EUR/km")
 
     # ── Žemėlapis ──
     st.divider()
-    st.markdown("### 🗺️ Maršrutas žemėlapyje")
+    st.markdown(f"### {_t('map_header')}")
 
     center_lat = sum(c[0] for c in all_coords) / len(all_coords)
     center_lon = sum(c[1] for c in all_coords) / len(all_coords)
@@ -850,7 +1103,7 @@ if calculate and raw_text.strip():
 
     # ── PDF ──
     st.divider()
-    st.markdown("### 📥 Ataskaita")
+    st.markdown(f"### {_t('report_header')}")
     try:
         pdf_bytes = generate_pdf(
             seg_rows=seg_rows,
@@ -864,10 +1117,11 @@ if calculate and raw_text.strip():
             full_route_min=full_route["travel_time_min"],
             client_price_per_km=client_price_per_km,
             euro_class=euro_class,
+            lang=st.session_state.get("lang", "LT"),
         )
         fname = f"marsrutas_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
         st.download_button(
-            label="📄 Atsisiųsti PDF ataskaitą",
+            label=_t("btn_download_pdf"),
             data=pdf_bytes,
             file_name=fname,
             mime="application/pdf",
@@ -875,4 +1129,6 @@ if calculate and raw_text.strip():
             use_container_width=True,
         )
     except Exception as e:
-        st.warning(f"PDF generavimo klaida: {e}")
+        st.warning(_t("pdf_error", e=str(e)))
+
+st.caption(_t("footer_contact"))
