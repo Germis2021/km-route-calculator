@@ -1,3 +1,4 @@
+import io
 import os
 import math
 import datetime
@@ -184,6 +185,7 @@ _TEXTS = {
         "pdf_transport_eur": "Transport. suma EUR",
         "pdf_total_row": "VISO",
         "pdf_header_subtitle": "Sugeneruota: {date}  |  Euro klase: {euro_class}  |  Kaina/km: {price:.2f} EUR",
+        "pdf_map_title": "Maršrutas žemėlapyje",
         "pdf_nr": "Nr.",
         "pdf_maut_note": "Euro klase: {euro_class}",
         "pdf_client_km_diff": "skirtumas: {sign}{diff:.1f} km",
@@ -299,6 +301,7 @@ _TEXTS = {
         "pdf_transport_eur": "Transport amount EUR",
         "pdf_total_row": "TOTAL",
         "pdf_header_subtitle": "Generated: {date}  |  Euro class: {euro_class}  |  Price/km: {price:.2f} EUR",
+        "pdf_map_title": "Route map",
         "pdf_nr": "No.",
         "pdf_maut_note": "Euro class: {euro_class}",
         "pdf_client_km_diff": "difference: {sign}{diff:.1f} km",
@@ -705,6 +708,42 @@ def segment_distance(a, b):
     return result["distance_km"] if result else None
 
 
+def get_azure_static_map(path_coords: list, width: int = 1024, height: int = 768) -> bytes | None:
+    """Fetch a static PNG map image from Azure Maps with the route path drawn. path_coords: list of [lon, lat]. Returns PNG bytes or None."""
+    if not path_coords or len(path_coords) < 2 or not AZURE_MAPS_KEY:
+        return None
+    # API limits 100 points per path; sample evenly if needed
+    max_points = 100
+    if len(path_coords) > max_points:
+        step = (len(path_coords) - 1) / (max_points - 1)
+        path_coords = [path_coords[int(i * step)] for i in range(max_points)]
+    lons = [p[0] for p in path_coords]
+    lats = [p[1] for p in path_coords]
+    min_lon, max_lon = min(lons), max(lons)
+    min_lat, max_lat = min(lats), max(lats)
+    # Small padding for bbox
+    pad_lon = max(0.1, (max_lon - min_lon) * 0.05)
+    pad_lat = max(0.05, (max_lat - min_lat) * 0.05)
+    bbox = f"{min_lon - pad_lon},{min_lat - pad_lat},{max_lon + pad_lon},{max_lat + pad_lat}"
+    path_str = "|".join(f"{lon} {lat}" for lon, lat in path_coords)
+    path_param = f"lc4682B4|lw4|la0.8||{path_str}"  # blue line, width 4
+    params = {
+        "api-version": "2024-04-01",
+        "subscription-key": AZURE_MAPS_KEY,
+        "bbox": bbox,
+        "width": width,
+        "height": height,
+        "path": path_param,
+    }
+    try:
+        r = requests.get(f"{BASE_URL}/map/static", params=params, timeout=15)
+        if r.status_code == 200:
+            return r.content
+    except Exception:
+        pass
+    return None
+
+
 def haversine_km(p1, p2):
     R = 6371.0
     lat1, lon1 = math.radians(p1[1]), math.radians(p1[0])
@@ -745,7 +784,8 @@ def _safe(text: str) -> str:
 
 def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
                  maut_total, grand_total, client_km, full_route_min,
-                 client_price_per_km, euro_class, lang: str = "LT") -> bytes:
+                 client_price_per_km, euro_class, lang: str = "LT",
+                 static_map_png: bytes | None = None) -> bytes:
     L = _TEXTS.get(lang, _TEXTS["LT"])
     date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     pdf_title = L["pdf_title"]
@@ -870,6 +910,19 @@ def generate_pdf(seg_rows, valid_pairs, country_rows, total_km, transport_cost,
         pdf.cell(cc_col_w[4], 5.5, _safe(row["Transport. EUR"]), border=1, fill=True, align="C")
         pdf.ln()
         fill_row = not fill_row
+
+    if static_map_png:
+        pdf.add_page(orientation="L")
+        pdf.set_font("Helvetica", "B", 10)
+        pdf.set_fill_color(230, 240, 255)
+        pdf.cell(0, 7, L["pdf_map_title"], fill=True, new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(2)
+        try:
+            img = io.BytesIO(static_map_png)
+            # A4 landscape: 297mm x 210mm; use width 277mm to fit with margins
+            pdf.image(img, w=277)
+        except Exception:
+            pass
 
     return bytes(pdf.output())
 
@@ -1208,6 +1261,7 @@ if calculate and raw_text.strip():
     st.divider()
     st.markdown(f"### {_t('report_header')}")
     try:
+        static_map_png = get_azure_static_map(path_coords)
         pdf_bytes = generate_pdf(
             seg_rows=seg_rows,
             valid_pairs=valid_pairs,
@@ -1221,6 +1275,7 @@ if calculate and raw_text.strip():
             client_price_per_km=client_price_per_km,
             euro_class=euro_class,
             lang=st.session_state.get("lang", "LT"),
+            static_map_png=static_map_png,
         )
         fname = f"marsrutas_{datetime.datetime.now().strftime('%Y%m%d_%H%M')}.pdf"
         st.download_button(
