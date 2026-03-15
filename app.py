@@ -74,14 +74,25 @@ def _t(key: str, **kwargs) -> str:
 
 _TEXTS = {
     "LT": {
-        "landing_description": "Įklijuokite adresus iš Excel → gaukite km pagal šalis, kelių mokesčius (Maut) ir PDF ataskaitą. Greitas ir paprastas įrankis transporto įmonėms.",
-        "how_it_works": (
-            "📋 **Kaip tai veikia?**\n\n"
+        "landing_description": (
             "Transporto įmonėse dažnai tenka tikrinti klientų pateiktus reisų atsiskaitymus. "
             "Tradiciškai tai reiškia — kiekvienas adresas suvedamas į Google Maps rankiniu būdu, km dauginami iš kainos, "
             "skaičiuojami kelių mokesčiai... ir visa tai kiekvienam reisui atskirai.\n\n"
             "RouteCalc leidžia tiesiog nukopijuoti adresų eilutę iš Excel ir per sekundes gauti: km pagal šalis, "
-            "Maut kelių mokesčius pagal vilkiko Euro klasę ir PDF ataskaitą palyginimui su kliento credit note."
+            "Maut kelių mokesčius pagal vilkiko Euro klasę ir PDF ataskaitą palyginimui su kliento credit note.\n\n"
+            "⚠️ **Svarbu:** Ši programėlė skirta greitam sutikrinimui su kliento credit note po įvykdyto reiso — ne kelionės planavimui. "
+            "Kelių mokesčių tarifai paremti viešai skelbiamais oficialiais duomenimis ir gali nežymiai skirtis priklausomai nuo konkretaus greitkelio atkarpos ar sezono. "
+            "Galimi nedideli atstumo nukrypimai (~1-3%) dėl maršruto optimizavimo skirtumų."
+        ),
+        "how_it_works": (
+            "Transporto įmonėse dažnai tenka tikrinti klientų pateiktus reisų atsiskaitymus. "
+            "Tradiciškai tai reiškia — kiekvienas adresas suvedamas į Google Maps rankiniu būdu, km dauginami iš kainos, "
+            "skaičiuojami kelių mokesčiai... ir visa tai kiekvienam reisui atskirai.\n\n"
+            "RouteCalc leidžia tiesiog nukopijuoti adresų eilutę iš Excel ir per sekundes gauti: km pagal šalis, "
+            "Maut kelių mokesčius pagal vilkiko Euro klasę ir PDF ataskaitą palyginimui su kliento credit note.\n\n"
+            "⚠️ **Svarbu:** Ši programėlė skirta greitam sutikrinimui su kliento credit note po įvykdyto reiso — ne kelionės planavimui. "
+            "Kelių mokesčių tarifai paremti viešai skelbiamais oficialiais duomenimis ir gali nežymiai skirtis priklausomai nuo konkretaus greitkelio atkarpos ar sezono. "
+            "Galimi nedideli atstumo nukrypimai (~1-3%) dėl maršruto optimizavimo skirtumų."
         ),
         "disclaimer": "⚠️ Atstumai skaičiuojami pagal žemėlapių duomenis. Galimi nedideli nukrypimai (~1-3%) dėl maršruto optimizavimo skirtumų.",
         "landing_title": "🗺️ RouteCalc – Maršruto KM skaičiuoklė",
@@ -178,14 +189,25 @@ _TEXTS = {
         "pdf_client_km_diff": "skirtumas: {sign}{diff:.1f} km",
     },
     "EN": {
-        "landing_description": "Paste addresses from Excel → get km by country, road tolls (Maut) and PDF report. A fast and simple tool for transport companies.",
-        "how_it_works": (
-            "📋 **How it works?**\n\n"
+        "landing_description": (
             "Transport companies often need to verify client freight invoices. "
             "Traditionally this means — manually entering each address into Google Maps, multiplying km by rate, "
             "calculating road tolls... for every single trip.\n\n"
             "RouteCalc lets you simply copy-paste an address line from Excel and instantly get: km by country, "
-            "Maut road tolls by truck Euro class, and a PDF report to compare against client credit note."
+            "Maut road tolls by truck Euro class, and a PDF report to compare against client credit note.\n\n"
+            "⚠️ **Important:** This tool is designed for quick verification against client credit notes after a completed trip — not for journey planning. "
+            "Road toll rates are based on publicly available official data and may vary slightly depending on the specific motorway section or season. "
+            "Minor distance deviations (~1-3%) may occur due to routing differences."
+        ),
+        "how_it_works": (
+            "Transport companies often need to verify client freight invoices. "
+            "Traditionally this means — manually entering each address into Google Maps, multiplying km by rate, "
+            "calculating road tolls... for every single trip.\n\n"
+            "RouteCalc lets you simply copy-paste an address line from Excel and instantly get: km by country, "
+            "Maut road tolls by truck Euro class, and a PDF report to compare against client credit note.\n\n"
+            "⚠️ **Important:** This tool is designed for quick verification against client credit notes after a completed trip — not for journey planning. "
+            "Road toll rates are based on publicly available official data and may vary slightly depending on the specific motorway section or season. "
+            "Minor distance deviations (~1-3%) may occur due to routing differences."
         ),
         "disclaimer": "⚠️ Distances are calculated based on map data. Minor deviations (~1-3%) may occur due to routing differences.",
         "landing_title": "🗺️ RouteCalc – Route KM Calculator",
@@ -471,8 +493,7 @@ def _render_landing():
                 st.rerun()
     _inject_lang_switcher_css()
     st.title(_t("landing_title"))
-    st.markdown(_t("how_it_works"))
-    st.caption(_t("disclaimer"))
+    st.markdown(_t("landing_description"))
     st.divider()
     st.markdown(f"**{_t('continue_with_email')}**")
     email_col, btn_col = st.columns([2, 1])
@@ -565,8 +586,10 @@ COUNTRY_FLAGS = {
     "FI": "🇫🇮", "HR": "🇭🇷", "SI": "🇸🇮", "LU": "🇱🇺", "PT": "🇵🇹",
 }
 
+# Atnaujinta: 2025-03 | Šaltiniai: Toll Collect (DE), Viapass (BE), ASFINAG (AT), Vejdirektoratet (DK)
+# DK: km mokestis nuo 2025-01-01 (pakeitė Eurovignetą)
+# Sekantis peržiūrėjimas: 2026-01
 # Kelių mokesčiai (Maut) EUR/km pagal šalį ir Euro klasę (>7.5t, 4+ ašys)
-# Šaltiniai: oficialūs 2024 tarifai
 MAUT_RATES = {
     # (šalis): {euro_klase: EUR/km}
     "DE": {"Euro 6": 0.274, "Euro 5": 0.321, "Euro 4": 0.357, "Euro 3": 0.404, "Euro 2-": 0.450},
@@ -581,9 +604,9 @@ MAUT_RATES = {
     "ES": {"Euro 6": 0.090, "Euro 5": 0.110, "Euro 4": 0.125, "Euro 3": 0.140, "Euro 2-": 0.155},
     "IT": {"Euro 6": 0.110, "Euro 5": 0.135, "Euro 4": 0.155, "Euro 3": 0.175, "Euro 2-": 0.195},
     "PT": {"Euro 6": 0.095, "Euro 5": 0.115, "Euro 4": 0.130, "Euro 3": 0.148, "Euro 2-": 0.165},
+    "DK": {"Euro 6": 0.139, "Euro 5": 0.162, "Euro 4": 0.181, "Euro 3": 0.200, "Euro 2-": 0.220},
     # Šalys be Maut (vinjetas arba nėra) – tarifas 0
     "NL": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
-    "DK": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
     "SE": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
     "LT": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
     "LV": {"Euro 6": 0.0, "Euro 5": 0.0, "Euro 4": 0.0, "Euro 3": 0.0, "Euro 2-": 0.0},
