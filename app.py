@@ -355,6 +355,7 @@ def _create_checkout_session(plan: str) -> str | None:
             "line_items": [{"price": price_id, "quantity": 1}],
             "success_url": f"{APP_BASE_URL}/?session_id={{CHECKOUT_SESSION_ID}}",
             "cancel_url": APP_BASE_URL + "/",
+            "allow_promotion_codes": True,
         }
         if plan == "trial":
             kwargs["subscription_data"] = {"trial_period_days": 7}
