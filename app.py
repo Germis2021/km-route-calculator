@@ -110,6 +110,8 @@ _TEXTS = {
         "yearly_price": "149 EUR/metus",
         "yearly_desc": "Sutaupykite ~35%.",
         "btn_yearly": "Metinis 149 EUR/metus",
+        "coming_soon_note": "Ruošiamas. Specialios sąlygos early access klientams.",
+        "early_access_note": "* Early Access kaina. Kainodara gali keistis. Esami klientai išlaiko savo planą.",
         "after_payment": "Po apmokėjimo būsite nukreipti atgal į programą.",
         "continue_with_email": "Jau turite prenumeratą? Prisijunkite el. paštu",
         "email_placeholder": "el. paštas",
@@ -226,6 +228,8 @@ _TEXTS = {
         "yearly_price": "149 EUR/year",
         "yearly_desc": "Save ~35%.",
         "btn_yearly": "Yearly 149 EUR/year",
+        "coming_soon_note": "Coming soon. Special terms for early access customers.",
+        "early_access_note": "* Early Access pricing. Pricing subject to change. Existing customers keep their plan.",
         "after_payment": "After payment you will be redirected back to the app.",
         "continue_with_email": "Already have a subscription? Continue with email",
         "email_placeholder": "email",
@@ -549,16 +553,11 @@ def _render_landing():
                 st.error(_t("error_stripe"))
     with col3:
         st.markdown(f"#### {_t('yearly_plan')}")
-        st.markdown(f"**{_t('yearly_price')}**")
-        st.markdown(_t("yearly_desc"))
-        if st.button(_t("btn_yearly"), key="btn_yearly", use_container_width=True):
-            url = _create_checkout_session("yearly")
-            if url:
-                st.session_state["pending_redirect_url"] = url
-                st.rerun()
-            else:
-                st.error(_t("error_stripe"))
+        st.markdown("**Coming soon**")
+        st.markdown(_t("coming_soon_note"))
+        st.button(_t("btn_yearly"), key="btn_yearly", use_container_width=True, disabled=True)
     st.divider()
+    st.caption(_t("early_access_note"))
     st.caption(_t("after_payment"))
 
 
