@@ -1,6 +1,7 @@
 import os
 import re
 import math
+import datetime
 import requests
 import streamlit as st
 import pandas as pd
@@ -184,45 +185,125 @@ def arrow_layer(path_coords, step=10):
 
 
 # ─────────────────────────────────────────────
+# Šveicarijos tranzito vengimas
+# ─────────────────────────────────────────────
+
+# Supaprastintas Šveicarijos kontūras (lon, lat). Tikslumas ~5–10 km, todėl
+# tranzitu laikome tik tada, kai maršrute per Šveicariją nuvažiuojama > CH_TRANSIT_MIN_KM.
+CH_POLYGON = [
+    (5.96, 46.20), (6.12, 46.15), (6.25, 46.30), (6.55, 46.45), (6.80, 46.39), (6.85, 46.12),
+    (7.04, 45.92), (7.18, 45.87), (7.66, 45.98), (7.88, 45.92), (8.15, 46.15),
+    (8.44, 46.46), (8.70, 46.10), (8.95, 45.83), (9.08, 45.90), (9.30, 46.50),
+    (9.55, 46.30), (10.05, 46.23), (10.15, 46.42), (10.47, 46.55), (10.49, 46.94),
+    (9.95, 46.90), (9.53, 47.05), (9.60, 47.47), (9.18, 47.66), (8.65, 47.80),
+    (8.22, 47.60), (7.59, 47.59), (7.35, 47.43), (6.95, 47.30), (6.45, 46.95),
+    (6.10, 46.60),
+]
+CH_TRANSIT_MIN_KM = 20
+
+# Kandidatai apvažiavimui; pasirenkamas trumpiausias, kuris nekerta Šveicarijos
+AVOID_CH_VIA = [
+    ("Brenerį", (47.0025, 11.5058)),
+    ("Monblano tunelį", (45.8580, 6.8870)),
+    ("Frejus tunelį", (45.1140, 6.6840)),
+]
+
+
+def _in_ch(lat, lon):
+    inside = False
+    pts = CH_POLYGON
+    j = len(pts) - 1
+    for i in range(len(pts)):
+        xi, yi = pts[i]
+        xj, yj = pts[j]
+        if (yi > lat) != (yj > lat) and lon < (xj - xi) * (lat - yi) / (yj - yi) + xi:
+            inside = not inside
+        j = i
+    return inside
+
+
+def _haversine_km(lon1, lat1, lon2, lat2):
+    r = 6371.0
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = p2 - p1, math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def ch_km(path_coords):
+    """Kiek km maršruto eina per Šveicariją (path_coords: [[lon, lat], ...])."""
+    total = 0.0
+    for p, q in zip(path_coords, path_coords[1:]):
+        if _in_ch((p[1] + q[1]) / 2, (p[0] + q[0]) / 2):
+            total += _haversine_km(p[0], p[1], q[0], q[1])
+    return total
+
+
+def segment_route(a, b, avoid_ch):
+    """Grąžina (route_dict, pastaba). Jei reikia, apvažiuoja Šveicariją."""
+    base = route_distance([a, b])
+    if not base or not avoid_ch:
+        return base, ""
+    if _in_ch(*a) or _in_ch(*b):
+        return base, ""
+    if ch_km(base["path_coords"]) <= CH_TRANSIT_MIN_KM:
+        return base, ""
+    best, best_name = None, None
+    for name, via in AVOID_CH_VIA:
+        r = route_distance([a, via, b])
+        if r and ch_km(r["path_coords"]) <= CH_TRANSIT_MIN_KM:
+            if best is None or r["distance_km"] < best["distance_km"]:
+                best, best_name = r, name
+    if best:
+        return best, f"per {best_name} (vengiant CH, trumpiausias {base['distance_km']:.0f} km)"
+    return base, "⚠️ per Šveicariją – apvažiavimo rasti nepavyko"
+
+
+# ─────────────────────────────────────────────
 # UI
 # ─────────────────────────────────────────────
 
 st.title("🗺️ Maršruto KM Skaičiuoklė")
-st.caption("Įklijuokite adresus → gaukite atstumus keliais ir žemėlapį")
+st.caption("Įklijuokite adresus → gaukite atstumus keliais, palyginkite su kliento km ir patvirtinkite")
 
 if not AZURE_MAPS_KEY:
     st.error("⚠️ AZURE_MAPS_KEY nenustatytas. Pridėkite jį į .env arba Streamlit Secrets.")
     st.stop()
 
+if "approved" not in st.session_state:
+    st.session_state["approved"] = []
+
 col_input, col_compare = st.columns([3, 1])
 
 with col_input:
     raw_text = st.text_area(
-        "📋 Adresai – po vieną per eilutę, visa Excel eilutė, arba vienoje eilutėje (atskirti ; arba šalies kodu, pvz. F - 50880 ...)",
-        height=220,
+        "📋 Adresai – po vieną per eilutę, visa Excel eilutė, arba vienoje eilutėje "
+        "(atskirti ; arba šalies kodu, pvz. F - 50880 ...)",
+        height=160,
         placeholder=(
-            "Variantas 1 – po vieną per eilutę:\n"
-            "Hamburg, Germany\n"
-            "B-9750 Zingem\n"
-            "F-51350 Cormontreuil\n"
-            "F-95520 Osny\n\n"
-            "Variantas 2 – visa Excel eilutė (Ctrl+C → Ctrl+V):\n"
-            "Hamburg, Germany\tB-9750 Zingem\tF-51350 Cormontreuil\tF-95520 Osny"
+            "CH - 1908 Riddes I - 15067 Novi Ligure- D - 63526 Erlensee\n"
+            "arba visa Excel eilutė (Ctrl+C → Ctrl+V)"
         ),
     )
+    trip_ref = st.text_input("🔖 Reiso / užsakymo Nr. (nebūtina)", placeholder="pvz. 2026-1045")
 
 with col_compare:
-    client_km = st.number_input(
-        "📄 Kliento nurodyti km",
-        min_value=0,
-        value=0,
-        step=10,
-        help="Įveskite kliento pasiūlytą atstumą palyginimui",
+    client_km = st.number_input("📄 Kliento nurodyti km", min_value=0, value=0, step=10)
+    t1, t2 = st.columns([2, 1])
+    with t1:
+        tol_value = st.number_input("Tolerancija ±", min_value=0.0, value=20.0, step=5.0)
+    with t2:
+        tol_unit = st.selectbox("Vnt.", ["km", "%"], label_visibility="visible")
+    avoid_ch = st.checkbox(
+        "Vengti Šveicarijos tranzito",
+        value=True,
+        help="Jei atkarpa prasideda ir baigiasi ne Šveicarijoje, maršrutas apvažiuoja ją "
+             "(per Brenerį / Monblaną / Frejus – trumpiausią variantą).",
     )
-    st.write("")
-    calculate = st.button("🧮 Skaičiuoti", type="primary", use_container_width=True)
+    calculate = st.button("🧮 Skaičiuoti", type="primary", width="stretch")
 
 st.divider()
+
 
 def _split_by_postal_prefix(chunk: str) -> list:
     """Jei vienoje vietoje keli adresai 'F - 50880 X- F - 77550 Y', suskaido pagal šalies+pašto kodą."""
@@ -252,104 +333,123 @@ def parse_addresses(text: str) -> list:
     return [c for c in cleaned if c]
 
 
-if calculate and raw_text.strip():
-    addresses = parse_addresses(raw_text)
-
-    if len(addresses) < 2:
-        st.warning("Reikia bent 2 adresų.")
-        st.stop()
-
-    # 1. Geocoding
-    st.markdown("#### 📍 Geocoding...")
-    coords = []
+def run_calculation(addresses, avoid_ch):
+    st.markdown("#### 📍 Ieškomi adresai...")
     geocode_results = []
     progress = st.progress(0)
-
     for i, addr in enumerate(addresses):
-        with st.spinner(f"Ieškoma: {addr}"):
-            result = geocode(addr)
-            geocode_results.append((addr, result))
-            if result:
-                coords.append(result)
-            progress.progress((i + 1) / len(addresses))
-
+        geocode_results.append((addr, geocode(addr)))
+        progress.progress((i + 1) / len(addresses))
     progress.empty()
 
-    failed = [(addr, r) for addr, r in geocode_results if r is None]
-    if failed:
-        for addr, _ in failed:
-            st.warning(f"⚠️ Nerastas: **{addr}**")
-
+    failed = [addr for addr, r in geocode_results if r is None]
     valid_pairs = [(addr, r) for addr, r in geocode_results if r is not None]
-
     if len(valid_pairs) < 2:
-        st.error("Nepakanka rastų adresų maršrutui skaičiuoti.")
-        st.stop()
+        return {"error": "Nepakanka rastų adresų maršrutui skaičiuoti.", "failed": failed}
 
-    # 2. Segmentų atstumai
     st.markdown("#### 🛣️ Skaičiuojami atstumai...")
-    rows = []
+    rows, paths = [], []
     cumulative = 0.0
-    all_coords = [r for _, r in valid_pairs]
-
-    segment_progress = st.progress(0)
-    for i in range(len(valid_pairs)):
-        addr, coord = valid_pairs[i]
+    seg_progress = st.progress(0)
+    for i, (addr, coord) in enumerate(valid_pairs):
+        seg_km, note = None, ""
         if i < len(valid_pairs) - 1:
-            with st.spinner(f"Segmentas {i+1}→{i+2}..."):
-                seg_km = segment_distance(all_coords[i], all_coords[i + 1])
-        else:
-            seg_km = None
-
+            route, note = segment_route(coord, valid_pairs[i + 1][1], avoid_ch)
+            if route:
+                seg_km = route["distance_km"]
+                paths.append(route["path_coords"])
+            else:
+                note = "⚠️ maršruto gauti nepavyko"
         if seg_km:
             cumulative += seg_km
-
         rows.append({
             "Nr.": i + 1,
             "Adresas": addr,
             "Koordinatės": f"{coord[0]:.4f}, {coord[1]:.4f}",
             "Iki sekančio (km)": f"{seg_km:.1f}" if seg_km else "—",
             "Kaupiamasis (km)": f"{cumulative:.1f}",
+            "Pastaba": note,
         })
-        segment_progress.progress((i + 1) / len(valid_pairs))
+        seg_progress.progress((i + 1) / len(valid_pairs))
+    seg_progress.empty()
 
-    segment_progress.empty()
+    return {
+        "rows": rows,
+        "paths": paths,
+        "points": valid_pairs,
+        "total_km": round(cumulative, 1),
+        "failed": failed,
+        "addresses": addresses,
+    }
 
-    # 3. Rezultatų lentelė
-    st.divider()
-    st.markdown("### 📊 Rezultatai")
 
-    total_km = cumulative
-    df = pd.DataFrame(rows)
-    st.dataframe(df, hide_index=True, use_container_width=True)
+if calculate:
+    addresses = parse_addresses(raw_text) if raw_text.strip() else []
+    if len(addresses) < 2:
+        st.warning("Reikia bent 2 adresų.")
+        st.session_state.pop("result", None)
+    else:
+        st.session_state["result"] = run_calculation(addresses, avoid_ch)
+        st.session_state["result"]["trip_ref"] = trip_ref
+        st.rerun()
 
-    # Suvestinė
-    mc1, mc2, mc3 = st.columns(3)
-    mc1.metric("📏 Iš viso km (keliais)", f"{total_km:.1f} km")
-    if client_km > 0:
-        diff = total_km - client_km
-        sign = "+" if diff > 0 else ""
-        mc2.metric("📄 Kliento km", f"{client_km} km")
-        color = "normal" if abs(diff) <= 20 else "inverse"
-        mc3.metric("📐 Skirtumas", f"{sign}{diff:.1f} km", delta_color=color)
+result = st.session_state.get("result")
 
-    # 4. Žemėlapis
-    st.divider()
-    st.markdown("### 🗺️ Maršrutas žemėlapyje")
+if result:
+    for addr in result.get("failed", []):
+        st.warning(f"⚠️ Nerastas: **{addr}**")
+    if result.get("error"):
+        st.error(result["error"])
+    else:
+        st.markdown("### 📊 Rezultatai")
+        st.dataframe(pd.DataFrame(result["rows"]), hide_index=True, width="stretch")
 
-    with st.spinner("Skaičiuojamas pilnas maršrutas žemėlapiui..."):
-        full_route = route_distance(all_coords)
+        total_km = result["total_km"]
+        mc1, mc2, mc3 = st.columns(3)
+        mc1.metric("📏 Iš viso km (keliais)", f"{total_km:.1f} km")
 
-    if full_route:
-        center_lat = sum(c[0] for c in all_coords) / len(all_coords)
-        center_lon = sum(c[1] for c in all_coords) / len(all_coords)
+        status = None
+        if client_km > 0:
+            diff = total_km - client_km
+            allowed = tol_value if tol_unit == "km" else client_km * tol_value / 100
+            diff_pct = diff / client_km * 100
+            mc2.metric("📄 Kliento km", f"{client_km} km")
+            mc3.metric("📐 Skirtumas", f"{diff:+.1f} km ({diff_pct:+.1f}%)")
+            tol_txt = f"±{tol_value:g} {tol_unit}" + (f" = ±{allowed:.0f} km" if tol_unit == "%" else "")
+            if abs(diff) <= allowed:
+                status = "Atitinka"
+                st.success(f"✅ **Atitinka** – skirtumas {diff:+.1f} km telpa į toleranciją ({tol_txt}).")
+            else:
+                status = "Neatitinka"
+                st.error(f"❌ **Neatitinka** – skirtumas {diff:+.1f} km viršija toleranciją ({tol_txt}).")
 
-        view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=6, pitch=0)
+            ref = result.get("trip_ref") or ""
+            label = "✔️ Patvirtinti" if status == "Atitinka" else "✔️ Patvirtinti vis tiek"
+            if st.button(label, type="primary" if status == "Atitinka" else "secondary"):
+                st.session_state["approved"].append({
+                    "Laikas": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "Reisas": ref,
+                    "Maršrutas": " → ".join(result["addresses"]),
+                    "Mūsų km": total_km,
+                    "Kliento km": client_km,
+                    "Skirtumas km": round(diff, 1),
+                    "Tolerancija": tol_txt,
+                    "Statusas": status,
+                })
+                st.session_state.pop("result", None)
+                st.rerun()
+        else:
+            st.info("Įveskite kliento km, kad galėtumėte palyginti ir patvirtinti.")
 
+        st.markdown("### 🗺️ Maršrutas žemėlapyje")
+        pts = result["points"]
+        all_path = [pt for path in result["paths"] for pt in path]
+        center_lat = sum(c[0] for _, c in pts) / len(pts)
+        center_lon = sum(c[1] for _, c in pts) / len(pts)
         layers = [
             pdk.Layer(
                 "PathLayer",
-                [{"path": full_route["path_coords"]}],
+                [{"path": p} for p in result["paths"]],
                 get_path="path",
                 get_width=50,
                 width_min_pixels=2,
@@ -360,7 +460,7 @@ if calculate and raw_text.strip():
                 "ScatterplotLayer",
                 pd.DataFrame([
                     {"lat": lat, "lon": lon, "name": f"{i+1}. {addr}"}
-                    for i, (addr, (lat, lon)) in enumerate(valid_pairs)
+                    for i, (addr, (lat, lon)) in enumerate(pts)
                 ]),
                 get_position="[lon, lat]",
                 get_color=[220, 50, 50, 220],
@@ -373,16 +473,36 @@ if calculate and raw_text.strip():
                 pickable=True,
             ),
         ]
-
-        arr = arrow_layer(full_route["path_coords"])
+        arr = arrow_layer(all_path)
         if arr:
             layers.append(arr)
-
         st.pydeck_chart(pdk.Deck(
             map_style="https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-            initial_view_state=view_state,
+            initial_view_state=pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=5, pitch=0),
             layers=layers,
             tooltip={"text": "{name}"},
         ))
-    else:
-        st.warning("Nepavyko gauti pilno maršruto žemėlapiui. Taškai vis tiek rodomi aukščiau.")
+
+# ─────────────────────────────────────────────
+# Patvirtinti reisai
+# ─────────────────────────────────────────────
+approved = st.session_state["approved"]
+if approved:
+    st.divider()
+    st.markdown(f"### ✅ Patvirtinti reisai ({len(approved)})")
+    st.caption("Sąrašas laikomas tik šioje naršyklės sesijoje – prieš uždarant atsisiųskite CSV.")
+    df_ok = pd.DataFrame(approved)
+    st.dataframe(df_ok, hide_index=True, width="stretch")
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        st.download_button(
+            "⬇️ Atsisiųsti CSV",
+            df_ok.to_csv(index=False, sep=";").encode("utf-8-sig"),
+            file_name=f"patvirtinti_reisai_{datetime.date.today()}.csv",
+            mime="text/csv",
+            width="stretch",
+        )
+    with c2:
+        if st.button("🗑️ Išvalyti sąrašą", width="stretch"):
+            st.session_state["approved"] = []
+            st.rerun()
