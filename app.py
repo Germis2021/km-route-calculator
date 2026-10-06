@@ -2,6 +2,7 @@ import os
 import re
 import math
 import datetime
+import json
 import requests
 import streamlit as st
 import pandas as pd
@@ -104,13 +105,26 @@ def geocode(address: str):
 
 
 def route_distance(waypoints):
+    """Kešuotas maršrutas; nesėkmės nekešuojamos."""
+    try:
+        return _route_cached(tuple(tuple(w) for w in waypoints))
+    except _RouteFailed:
+        return None
+
+
+class _RouteFailed(Exception):
+    pass
+
+
+@st.cache_data(ttl=30 * 24 * 3600, show_spinner=False)
+def _route_cached(waypoints):
     """
     Grąžina žodyną su distance_km, travel_time_min, path_coords
     arba None jei nepavyko.
     waypoints: [(lat, lon), ...]
     """
     if len(waypoints) < 2 or not AZURE_MAPS_KEY:
-        return None
+        raise _RouteFailed()
 
     # Pašaliname gretutines koordinates-dublikatus
     clean = [waypoints[0]]
@@ -118,7 +132,7 @@ def route_distance(waypoints):
         if wp != clean[-1]:
             clean.append(wp)
     if len(clean) < 2:
-        return None
+        raise _RouteFailed()
 
     query = ":".join(f"{lat},{lon}" for lat, lon in clean)
     params = {
@@ -128,15 +142,16 @@ def route_distance(waypoints):
         "travelMode": "truck",
         "vehicleEngineType": "combustion",
         "routeType": "fastest",
+        "traffic": "false",  # be gyvo eismo – tas pats reisas visada duoda tą patį km
     }
     try:
         r = requests.get(f"{BASE_URL}/route/directions/json", params=params, timeout=15)
         if r.status_code != 200:
-            return None
+            raise _RouteFailed()
         data = r.json()
         routes = data.get("routes", [])
         if not routes:
-            return None
+            raise _RouteFailed()
         route = routes[0]
         summary = route["summary"]
         path_coords = []
@@ -149,7 +164,7 @@ def route_distance(waypoints):
             "path_coords": path_coords,
         }
     except Exception:
-        return None
+        raise _RouteFailed()
 
 
 def segment_distance(a, b):
@@ -296,6 +311,37 @@ if not AZURE_MAPS_KEY:
     st.error("⚠️ AZURE_MAPS_KEY nenustatytas. Pridėkite jį į .env arba Streamlit Secrets.")
     st.stop()
 
+CLIENTS_FILE = "clients.json"
+
+
+def _load_saved_clients() -> list:
+    try:
+        with open(CLIENTS_FILE, encoding="utf-8") as f:
+            return [c for c in json.load(f) if c]
+    except Exception:
+        return []
+
+
+def _save_client(name: str):
+    name = (name or "").strip()
+    if not name:
+        return
+    clients = _load_saved_clients()
+    if name not in clients:
+        clients.append(name)
+        try:
+            with open(CLIENTS_FILE, "w", encoding="utf-8") as f:
+                json.dump(sorted(clients, key=str.lower), f, ensure_ascii=False)
+        except Exception:
+            pass
+
+
+def client_options() -> list:
+    names = set(_load_saved_clients())
+    names.update(r.get("Klientas", "") for r in st.session_state["approved"])
+    return sorted((n for n in names if n), key=str.lower)
+
+
 if "approved" not in st.session_state:
     st.session_state["approved"] = []
 
@@ -311,7 +357,18 @@ with col_input:
             "arba visa Excel eilutė (Ctrl+C → Ctrl+V)"
         ),
     )
-    trip_ref = st.text_input("🔖 Reiso / užsakymo Nr. (nebūtina)", placeholder="pvz. 2026-1045")
+    cc1, cc2 = st.columns([1, 1])
+    with cc1:
+        client_name = st.selectbox(
+            "👤 Klientas",
+            options=client_options(),
+            index=None,
+            placeholder="Pasirinkite arba įrašykite naują",
+            accept_new_options=True,
+            help="Naują klientą tiesiog įrašykite – po patvirtinimo jis atsiras sąraše.",
+        )
+    with cc2:
+        trip_ref = st.text_input("🔖 Reiso / užsakymo Nr. (nebūtina)", placeholder="pvz. 2026-1045")
 
 with col_compare:
     client_km = st.number_input("📄 Kliento nurodyti km", min_value=0, value=0, step=10)
@@ -421,6 +478,7 @@ if calculate:
     else:
         st.session_state["result"] = run_calculation(addresses, avoid_ch)
         st.session_state["result"]["trip_ref"] = trip_ref
+        st.session_state["result"]["client"] = (client_name or "").strip()
         st.rerun()
 
 result = st.session_state.get("result")
@@ -458,10 +516,12 @@ if result:
                 st.error(f"❌ **Neatitinka** – skirtumas {diff:+.1f} km viršija toleranciją ({tol_txt}).")
 
             ref = result.get("trip_ref") or ""
+            client = result.get("client") or ""
             label = "✔️ Patvirtinti" if status == "Atitinka" else "✔️ Patvirtinti vis tiek"
             if st.button(label, type="primary" if status == "Atitinka" else "secondary"):
                 st.session_state["approved"].append({
                     "Laikas": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "Klientas": client,
                     "Reisas": ref,
                     "Maršrutas": " → ".join(result["addresses"]),
                     "Mūsų km": total_km,
@@ -470,6 +530,7 @@ if result:
                     "Tolerancija": tol_txt,
                     "Statusas": status,
                 })
+                _save_client(client)
                 st.session_state.pop("result", None)
                 st.rerun()
         else:
@@ -520,18 +581,45 @@ if result:
 # ─────────────────────────────────────────────
 # Patvirtinti reisai
 # ─────────────────────────────────────────────
+with st.expander("📂 Tęsti nuo anksčiau atsisiųsto CSV"):
+    st.caption("Įkėlus anksčiau atsisiųstą CSV, patvirtinti reisai ir klientų sąrašas atkuriami.")
+    up = st.file_uploader("CSV failas", type=["csv"], label_visibility="collapsed")
+    if up is not None and st.session_state.get("_loaded_csv") != up.name + str(up.size):
+        try:
+            df_in = pd.read_csv(up, sep=";", encoding="utf-8-sig", dtype=str).fillna("")
+            rows_in = df_in.to_dict("records")
+            existing = {(r.get("Laikas"), r.get("Maršrutas"), str(r.get("Reisas"))) for r in st.session_state["approved"]}
+            added = 0
+            for r in rows_in:
+                key = (r.get("Laikas"), r.get("Maršrutas"), str(r.get("Reisas")))
+                if key not in existing:
+                    st.session_state["approved"].append(r)
+                    existing.add(key)
+                    added += 1
+                _save_client(r.get("Klientas", ""))
+            st.session_state["_loaded_csv"] = up.name + str(up.size)
+            st.success(f"Įkelta reisų: {added}")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Nepavyko nuskaityti CSV: {e}")
+
 approved = st.session_state["approved"]
 if approved:
     st.divider()
     st.markdown(f"### ✅ Patvirtinti reisai ({len(approved)})")
     st.caption("Sąrašas laikomas tik šioje naršyklės sesijoje – prieš uždarant atsisiųskite CSV.")
     df_ok = pd.DataFrame(approved)
+    if "Klientas" in df_ok.columns:
+        filt_opts = sorted({c for c in df_ok["Klientas"].astype(str) if c}, key=str.lower)
+        filt = st.multiselect("Rodyti tik klientus", filt_opts, placeholder="Visi klientai")
+        if filt:
+            df_ok = df_ok[df_ok["Klientas"].isin(filt)]
     st.dataframe(df_ok, hide_index=True, width="stretch")
     c1, c2 = st.columns([1, 1])
     with c1:
         st.download_button(
             "⬇️ Atsisiųsti CSV",
-            df_ok.to_csv(index=False, sep=";").encode("utf-8-sig"),
+            pd.DataFrame(approved).to_csv(index=False, sep=";").encode("utf-8-sig"),
             file_name=f"patvirtinti_reisai_{datetime.date.today()}.csv",
             mime="text/csv",
             width="stretch",
