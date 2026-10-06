@@ -1,4 +1,5 @@
 import os
+import re
 import math
 import requests
 import streamlit as st
@@ -33,8 +34,33 @@ def _is_in_europe(lat, lon):
     return 34.0 <= lat <= 72.0 and -12.0 <= lon <= 45.0
 
 
+COUNTRY_PREFIX = {
+    "A": "Austria", "AT": "Austria", "B": "Belgium", "BE": "Belgium", "BG": "Bulgaria",
+    "CH": "Switzerland", "CZ": "Czechia", "D": "Germany", "DE": "Germany", "DK": "Denmark",
+    "E": "Spain", "ES": "Spain", "EST": "Estonia", "EE": "Estonia", "F": "France", "FR": "France",
+    "FIN": "Finland", "FI": "Finland", "GB": "United Kingdom", "UK": "United Kingdom",
+    "GR": "Greece", "H": "Hungary", "HU": "Hungary", "HR": "Croatia", "I": "Italy", "IT": "Italy",
+    "IRL": "Ireland", "IE": "Ireland", "L": "Luxembourg", "LU": "Luxembourg", "LT": "Lithuania",
+    "LV": "Latvia", "N": "Norway", "NO": "Norway", "NL": "Netherlands", "P": "Portugal",
+    "PT": "Portugal", "PL": "Poland", "RO": "Romania", "S": "Sweden", "SE": "Sweden",
+    "SK": "Slovakia", "SLO": "Slovenia", "SI": "Slovenia",
+}
+
+# Šalies kodas + brūkšnys + pašto kodas, pvz. "F - 50880", "F-50880", "D-12345", "NL-1234"
+_PREFIX_POSTAL_RE = re.compile(r"(?<![A-Za-z0-9])([A-Z]{1,3})\s*-\s*(\d{3,6})")
+
+
+def normalize_address(address: str) -> str:
+    """'F - 50880 La Meauffe-' -> '50880 La Meauffe, France'. Kitus adresus grąžina apvalytus."""
+    a = address.strip().strip("-–;,").strip()
+    m = re.match(r"^([A-Z]{1,3})\s*-\s*(\d{3,6})\s*(.*)$", a)
+    if m and m.group(1) in COUNTRY_PREFIX:
+        city = m.group(3).strip().strip("-–,").strip()
+        return f"{m.group(2)} {city}, {COUNTRY_PREFIX[m.group(1)]}".replace("  ", " ")
+    return a
+
+
 def _simplify_address(address):
-    import re
     match = re.search(r'([A-Z]{1,2}-\d{4,5}\s+\S+)', address)
     if match:
         return match.group(1)
@@ -49,9 +75,11 @@ def geocode(address: str):
     if not AZURE_MAPS_KEY or not address.strip():
         return None
 
-    for query in [address, _simplify_address(address)]:
-        if not query:
+    tried = set()
+    for query in [normalize_address(address), address, _simplify_address(address)]:
+        if not query or query in tried:
             continue
+        tried.add(query)
         params = {
             "api-version": "1.0",
             "subscription-key": AZURE_MAPS_KEY,
@@ -61,6 +89,9 @@ def geocode(address: str):
         }
         try:
             r = requests.get(f"{BASE_URL}/search/address/json", params=params, timeout=8)
+            if r.status_code in (401, 403):
+                st.error(f"Azure Maps atmetė raktą (HTTP {r.status_code}). Patikrinkite AZURE_MAPS_KEY Secrets'uose.")
+                st.stop()
             if r.status_code == 200:
                 for result in r.json().get("results", []):
                     pos = result["position"]
@@ -167,7 +198,7 @@ col_input, col_compare = st.columns([3, 1])
 
 with col_input:
     raw_text = st.text_area(
-        "📋 Adresai – po vieną per eilutę **arba** visa eilutė iš Excel (Tab atskirti)",
+        "📋 Adresai – po vieną per eilutę, visa Excel eilutė, arba vienoje eilutėje (atskirti ; arba šalies kodu, pvz. F - 50880 ...)",
         height=220,
         placeholder=(
             "Variantas 1 – po vieną per eilutę:\n"
@@ -193,26 +224,32 @@ with col_compare:
 
 st.divider()
 
+def _split_by_postal_prefix(chunk: str) -> list:
+    """Jei vienoje vietoje keli adresai 'F - 50880 X- F - 77550 Y', suskaido pagal šalies+pašto kodą."""
+    starts = [m.start() for m in _PREFIX_POSTAL_RE.finditer(chunk) if m.group(1) in COUNTRY_PREFIX]
+    if len(starts) < 2:
+        return [chunk]
+    bounds = starts + [len(chunk)]
+    head = chunk[:starts[0]].strip(" -–;,")
+    parts = [head] if head else []
+    parts += [chunk[bounds[i]:bounds[i + 1]] for i in range(len(starts))]
+    return parts
+
+
 def parse_addresses(text: str) -> list:
     """
-    Supranta abu formatus:
+    Supranta:
     1. Vienas adresas per eilutę (Enter)
-    2. Visi adresai vienoje eilutėje, Tab atskirti (copy-paste iš Excel eilutės)
+    2. Visa Excel eilutė (Tab atskirti langeliai)
+    3. Viena eilutė su ; arba | skyrikliais
+    4. Viena eilutė, kurioje adresai su šalies kodu: 'F - 50880 La Meauffe- F - 77550 Réau'
     """
-    lines = [l.strip() for l in text.strip().splitlines() if l.strip()]
-    if not lines:
-        return []
-    # Jei yra tik viena eilutė ir joje yra Tab – Excel formatas
-    if len(lines) == 1 and "\t" in lines[0]:
-        return [a.strip() for a in lines[0].split("\t") if a.strip()]
-    # Jei kelios eilutės, bet pirmoje yra Tab – kiekviena eilutė gali būti Tab-atskirta
-    addresses = []
-    for line in lines:
-        if "\t" in line:
-            addresses.extend([a.strip() for a in line.split("\t") if a.strip()])
-        else:
-            addresses.append(line)
-    return addresses
+    chunks = []
+    for line in text.strip().splitlines():
+        for part in re.split(r"[\t;|]", line):
+            chunks.extend(_split_by_postal_prefix(part))
+    cleaned = [c.strip().strip("-–,").strip() for c in chunks]
+    return [c for c in cleaned if c]
 
 
 if calculate and raw_text.strip():
