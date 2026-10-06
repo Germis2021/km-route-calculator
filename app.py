@@ -1,3 +1,4 @@
+import io
 import os
 import re
 import math
@@ -301,6 +302,188 @@ def segment_route(a, b, avoid_ch):
 
 
 # ─────────────────────────────────────────────
+# PDF ataskaita
+# ─────────────────────────────────────────────
+
+_FONT_URLS = {
+    "": "https://raw.githubusercontent.com/matplotlib/matplotlib/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf",
+    "B": "https://raw.githubusercontent.com/matplotlib/matplotlib/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans-Bold.ttf",
+}
+_FONT_LOCAL = {
+    "": "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "B": "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+}
+
+
+@st.cache_resource(show_spinner=False)
+def _unicode_fonts():
+    """Grąžina {'': kelias, 'B': kelias} su lietuviškas raides palaikančiu šriftu arba None."""
+    paths = {}
+    for style, url in _FONT_URLS.items():
+        local = _FONT_LOCAL[style]
+        if os.path.exists(local):
+            paths[style] = local
+            continue
+        target = f"/tmp/DejaVuSans{'-Bold' if style else ''}.ttf"
+        if not os.path.exists(target):
+            try:
+                r = requests.get(url, timeout=15)
+                if r.status_code != 200:
+                    return None
+                with open(target, "wb") as f:
+                    f.write(r.content)
+            except Exception:
+                return None
+        paths[style] = target
+    return paths
+
+
+_TRANSLIT = str.maketrans("ąčęėįšųūžĄČĘĖĮŠŲŪŽ→—–", "aceeisuuzACEEISUUZ>--")
+
+
+def get_azure_static_map(path_coords, points, width=1000, height=620):
+    """Statinis Azure žemėlapis (PNG) su maršrutu ir stotelėmis. Grąžina bytes arba None."""
+    if not path_coords or len(path_coords) < 2:
+        return None
+    max_points = 100
+    if len(path_coords) > max_points:
+        step = (len(path_coords) - 1) / (max_points - 1)
+        path_coords = [path_coords[int(i * step)] for i in range(max_points)]
+    lons = [p[0] for p in path_coords] + [c[1] for _, c in points]
+    lats = [p[1] for p in path_coords] + [c[0] for _, c in points]
+    pad_lon = max(0.2, (max(lons) - min(lons)) * 0.08)
+    pad_lat = max(0.1, (max(lats) - min(lats)) * 0.08)
+    bbox = f"{min(lons) - pad_lon},{min(lats) - pad_lat},{max(lons) + pad_lon},{max(lats) + pad_lat}"
+    path_param = "lc4682B4|lw4|la0.85||" + "|".join(f"{lon:.5f} {lat:.5f}" for lon, lat in path_coords)
+    pins_param = "default|coE53935||" + "|".join(
+        f"'{i + 1}'{c[1]:.5f} {c[0]:.5f}" for i, (_, c) in enumerate(points)
+    )
+    base = {
+        "api-version": "1.0",
+        "subscription-key": AZURE_MAPS_KEY,
+        "bbox": bbox,
+        "width": width,
+        "height": height,
+        "path": path_param,
+    }
+    for extra in ({"pins": pins_param}, {}):
+        try:
+            r = requests.get(f"{BASE_URL}/map/static/png", params={**base, **extra}, timeout=20)
+            if r.status_code == 200 and r.content:
+                return r.content
+        except Exception:
+            pass
+    return None
+
+
+def generate_pdf(result, info, map_png=None) -> bytes:
+    from fpdf import FPDF
+
+    fonts = _unicode_fonts()
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    if fonts:
+        pdf.add_font("U", "", fonts[""])
+        pdf.add_font("U", "B", fonts["B"])
+        family = "U"
+
+        def t(x):
+            return str(x)
+    else:
+        family = "Helvetica"
+
+        def t(x):
+            return str(x).translate(_TRANSLIT).encode("latin-1", "replace").decode("latin-1")
+
+    pdf.add_page()
+    W = pdf.w - pdf.l_margin - pdf.r_margin
+
+    pdf.set_font(family, "B", 16)
+    pdf.cell(W, 9, t("Maršruto km patikra"), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font(family, "", 9)
+    pdf.set_text_color(110, 110, 110)
+    pdf.cell(W, 5, t(f"Sugeneruota {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}"),
+             new_x="LMARGIN", new_y="NEXT")
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(3)
+
+    def kv(label, value, bold=False):
+        pdf.set_font(family, "", 10)
+        pdf.cell(45, 6, t(label))
+        pdf.set_font(family, "B" if bold else "", 10)
+        pdf.cell(W - 45, 6, t(value), new_x="LMARGIN", new_y="NEXT")
+
+    kv("Klientas:", info.get("client") or "—")
+    kv("Reiso / užsakymo Nr.:", info.get("trip_ref") or "—")
+    pdf.ln(2)
+
+    total = result["total_km"]
+    dh = result.get("deadhead_km")
+    kv("Mūsų km (keliais):", f"{total:.1f} km", bold=True)
+    if dh is not None:
+        kv("  iš jų tuščia rida:", f"{dh:.1f} km")
+        kv("  su kroviniu:", f"{total - dh:.1f} km")
+    else:
+        kv("Tuščia rida:", "neįskaičiuota (nenurodyta ankstesnė iškrovimo vieta)")
+
+    status = info.get("status")
+    if info.get("client_km"):
+        kv("Kliento km:", f"{info['client_km']} km")
+        kv("Skirtumas:", f"{info['diff']:+.1f} km ({info['diff_pct']:+.1f}%)")
+        kv("Tolerancija:", info.get("tol_txt", ""))
+    if status:
+        pdf.ln(2)
+        ok = status == "Atitinka"
+        pdf.set_fill_color(*((220, 245, 225) if ok else (250, 220, 220)))
+        pdf.set_text_color(*((20, 110, 40) if ok else (170, 30, 30)))
+        pdf.set_font(family, "B", 12)
+        pdf.cell(W, 9, t(("ATITINKA" if ok else "NEATITINKA")), fill=True, align="C",
+                 new_x="LMARGIN", new_y="NEXT")
+        pdf.set_text_color(0, 0, 0)
+    pdf.ln(4)
+
+    # Stotelių lentelė
+    pdf.set_font(family, "B", 11)
+    pdf.cell(W, 7, t("Maršrutas"), new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font(family, "", 9)
+    pdf.set_fill_color(238, 238, 238)
+    with pdf.table(
+        col_widths=(8, 62, 22, 24, 64),
+        text_align=("CENTER", "LEFT", "RIGHT", "RIGHT", "LEFT"),
+        line_height=5,
+        first_row_as_headings=True,
+    ) as table:
+        head = table.row()
+        for h in ("Nr.", "Adresas", "Iki sek. km", "Kaupiamasis", "Pastaba"):
+            head.cell(t(h))
+        for r in result["rows"]:
+            row = table.row()
+            row.cell(t(r["Nr."]))
+            row.cell(t(r["Adresas"]))
+            row.cell(t(r["Iki sekančio (km)"]))
+            row.cell(t(r["Kaupiamasis (km)"]))
+            row.cell(t(r["Pastaba"].replace("🚚 ", "").replace("⚠️ ", "! ")))
+
+    if map_png:
+        pdf.ln(4)
+        img_w = W
+        img_h = img_w * 620 / 1000
+        if pdf.get_y() + img_h > pdf.h - pdf.b_margin:
+            pdf.add_page()
+        pdf.image(io.BytesIO(map_png), x=pdf.l_margin, w=img_w)
+
+    pdf.ln(3)
+    pdf.set_font(family, "", 8)
+    pdf.set_text_color(110, 110, 110)
+    pdf.multi_cell(W, 4, t(
+        "Atstumai apskaičiuoti Azure Maps (sunkvežimio maršrutas, be dabartinio eismo). "
+        + ("Šveicarijos tranzitas vengiamas. " if info.get("avoid_ch") else "")
+        + "Galimi nedideli nuokrypiai dėl maršruto pasirinkimo."
+    ))
+    return bytes(pdf.output())
+
+
+# ─────────────────────────────────────────────
 # UI
 # ─────────────────────────────────────────────
 
@@ -483,6 +666,20 @@ def run_calculation(addresses, avoid_ch, has_deadhead=False):
     }
 
 
+def pdf_filename(info) -> str:
+    parts = ["km_patikra", info.get("client") or "", info.get("trip_ref") or "",
+             datetime.date.today().isoformat()]
+    name = "_".join(p for p in parts if p)
+    return re.sub(r"[^\w\-]+", "_", name) + ".pdf"
+
+
+def trip_pdf(result, info) -> bytes:
+    if "map_png" not in result:
+        all_path = [pt for path in result["paths"] for pt in path]
+        result["map_png"] = get_azure_static_map(all_path, result["points"])
+    return generate_pdf(result, info, result.get("map_png"))
+
+
 if calculate:
     addresses = parse_addresses(raw_text) if raw_text.strip() else []
     dh = deadhead.strip().strip("-–;,").strip()
@@ -495,6 +692,7 @@ if calculate:
         st.session_state["result"] = run_calculation(addresses, avoid_ch, has_deadhead=bool(dh))
         st.session_state["result"]["trip_ref"] = trip_ref
         st.session_state["result"]["client"] = (client_name or "").strip()
+        st.session_state["result"]["avoid_ch"] = avoid_ch
         st.rerun()
 
 result = st.session_state.get("result")
@@ -522,6 +720,12 @@ if result:
             mc1.caption(f"iš jų tuščia rida {dh_km:.1f} km · su kroviniu {total_km - dh_km:.1f} km")
 
         status = None
+        info = {
+            "client": result.get("client") or "",
+            "trip_ref": result.get("trip_ref") or "",
+            "avoid_ch": result.get("avoid_ch", True),
+            "client_km": client_km,
+        }
         if client_km > 0:
             diff = total_km - client_km
             allowed = tol_value if tol_unit == "km" else client_km * tol_value / 100
@@ -536,10 +740,18 @@ if result:
                 status = "Neatitinka"
                 st.error(f"❌ **Neatitinka** – skirtumas {diff:+.1f} km viršija toleranciją ({tol_txt}).")
 
-            ref = result.get("trip_ref") or ""
-            client = result.get("client") or ""
+            ref = info["trip_ref"]
+            client = info["client"]
+            info.update({"diff": diff, "diff_pct": diff_pct, "tol_txt": tol_txt, "status": status})
             label = "✔️ Patvirtinti" if status == "Atitinka" else "✔️ Patvirtinti vis tiek"
-            if st.button(label, type="primary" if status == "Atitinka" else "secondary"):
+            b1, b2, _ = st.columns([1, 1, 2])
+            with b1:
+                approve = st.button(label, type="primary" if status == "Atitinka" else "secondary", width="stretch")
+            with b2:
+                pdf_bytes = trip_pdf(result, info)
+                st.download_button("📄 Atsisiųsti PDF", pdf_bytes, file_name=pdf_filename(info),
+                                   mime="application/pdf", width="stretch")
+            if approve:
                 st.session_state["approved"].append({
                     "Laikas": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "Klientas": client,
@@ -553,10 +765,13 @@ if result:
                     "Statusas": status,
                 })
                 _save_client(client)
+                st.session_state["last_pdf"] = (pdf_filename(info), pdf_bytes)
                 st.session_state.pop("result", None)
                 st.rerun()
         else:
             st.info("Įveskite kliento km, kad galėtumėte palyginti ir patvirtinti.")
+            st.download_button("📄 Atsisiųsti PDF", trip_pdf(result, info), file_name=pdf_filename(info),
+                               mime="application/pdf")
 
         st.markdown("### 🗺️ Maršrutas žemėlapyje")
         pts = result["points"]
@@ -629,6 +844,10 @@ approved = st.session_state["approved"]
 if approved:
     st.divider()
     st.markdown(f"### ✅ Patvirtinti reisai ({len(approved)})")
+    if st.session_state.get("last_pdf"):
+        fn, data = st.session_state["last_pdf"]
+        st.download_button(f"📄 Paskutinio patvirtinto reiso PDF ({fn})", data, file_name=fn,
+                           mime="application/pdf")
     st.caption("Sąrašas laikomas tik šioje naršyklės sesijoje – prieš uždarant atsisiųskite CSV.")
     df_ok = pd.DataFrame(approved)
     if "Klientas" in df_ok.columns:
