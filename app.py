@@ -348,6 +348,12 @@ if "approved" not in st.session_state:
 col_input, col_compare = st.columns([3, 1])
 
 with col_input:
+    deadhead = st.text_input(
+        "🚚 Ankstesnio reiso paskutinė iškrovimo vieta (tuščia rida nuo)",
+        placeholder="pvz. LT - 91100 Klaipėda  – iš ankstesnio reiso Excel eilutės paskutinė stotelė",
+        help="Įrašykite, kur sunkvežimis paskutinį kartą iškrovė prieš šį reisą. "
+             "Tada km skaičiuojami nuo ten iki pasikrovimo (tuščia rida) ir toliau per visas stoteles.",
+    )
     raw_text = st.text_area(
         "📋 Adresai – po vieną per eilutę, visa Excel eilutė, arba vienoje eilutėje "
         "(atskirti ; arba šalies kodu, pvz. F - 50880 ...)",
@@ -417,7 +423,7 @@ def parse_addresses(text: str) -> list:
     return [c for c in cleaned if c]
 
 
-def run_calculation(addresses, avoid_ch):
+def run_calculation(addresses, avoid_ch, has_deadhead=False):
     st.markdown("#### 📍 Ieškomi adresai...")
     geocode_results = []
     progress = st.progress(0)
@@ -428,11 +434,14 @@ def run_calculation(addresses, avoid_ch):
 
     failed = [addr for addr, r in geocode_results if r is None]
     valid_pairs = [(addr, r) for addr, r in geocode_results if r is not None]
+    if has_deadhead and geocode_results[0][1] is None:
+        has_deadhead = False  # tuščios ridos vieta nerasta – skaičiuojama be jos
     if len(valid_pairs) < 2:
         return {"error": "Nepakanka rastų adresų maršrutui skaičiuoti.", "failed": failed}
 
     st.markdown("#### 🛣️ Skaičiuojami atstumai...")
     rows, paths, diagnostics = [], [], []
+    deadhead_km = 0.0
     cumulative = 0.0
     seg_progress = st.progress(0)
     for i, (addr, coord) in enumerate(valid_pairs):
@@ -448,6 +457,9 @@ def run_calculation(addresses, avoid_ch):
                 note = "⚠️ maršruto gauti nepavyko"
         if seg_km:
             cumulative += seg_km
+        if has_deadhead and i == 0:
+            deadhead_km = seg_km or 0.0
+            note = ("🚚 tuščia rida iki pasikrovimo" + (f" · {note}" if note else ""))
         rows.append({
             "Nr.": i + 1,
             "Adresas": addr,
@@ -464,6 +476,7 @@ def run_calculation(addresses, avoid_ch):
         "paths": paths,
         "points": valid_pairs,
         "total_km": round(cumulative, 1),
+        "deadhead_km": round(deadhead_km, 1) if has_deadhead else None,
         "failed": failed,
         "addresses": addresses,
         "diagnostics": diagnostics,
@@ -472,11 +485,14 @@ def run_calculation(addresses, avoid_ch):
 
 if calculate:
     addresses = parse_addresses(raw_text) if raw_text.strip() else []
+    dh = deadhead.strip().strip("-–;,").strip()
+    if dh:
+        addresses = [dh] + addresses
     if len(addresses) < 2:
         st.warning("Reikia bent 2 adresų.")
         st.session_state.pop("result", None)
     else:
-        st.session_state["result"] = run_calculation(addresses, avoid_ch)
+        st.session_state["result"] = run_calculation(addresses, avoid_ch, has_deadhead=bool(dh))
         st.session_state["result"]["trip_ref"] = trip_ref
         st.session_state["result"]["client"] = (client_name or "").strip()
         st.rerun()
@@ -497,8 +513,13 @@ if result:
                     st.text(line)
 
         total_km = result["total_km"]
+        dh_km = result.get("deadhead_km")
+        if dh_km is None:
+            st.warning("🚚 Nenurodyta ankstesnio reiso iškrovimo vieta – tuščia rida į km neįskaičiuota.")
         mc1, mc2, mc3 = st.columns(3)
         mc1.metric("📏 Iš viso km (keliais)", f"{total_km:.1f} km")
+        if dh_km is not None:
+            mc1.caption(f"iš jų tuščia rida {dh_km:.1f} km · su kroviniu {total_km - dh_km:.1f} km")
 
         status = None
         if client_km > 0:
@@ -525,6 +546,7 @@ if result:
                     "Reisas": ref,
                     "Maršrutas": " → ".join(result["addresses"]),
                     "Mūsų km": total_km,
+                    "Tuščia rida km": dh_km if dh_km is not None else "",
                     "Kliento km": client_km,
                     "Skirtumas km": round(diff, 1),
                     "Tolerancija": tol_txt,
