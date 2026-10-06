@@ -239,24 +239,43 @@ def ch_km(path_coords):
     return total
 
 
+def _route_via(a, via, b):
+    """Maršrutas a → via → b kaip dvi atskiros atkarpos (patikimiau nei 3 taškai vienoje užklausoje)."""
+    r1 = route_distance([a, via])
+    r2 = route_distance([via, b])
+    if not r1 or not r2:
+        return None
+    return {
+        "distance_km": round(r1["distance_km"] + r2["distance_km"], 1),
+        "travel_time_min": r1["travel_time_min"] + r2["travel_time_min"],
+        "path_coords": r1["path_coords"] + r2["path_coords"],
+    }
+
+
 def segment_route(a, b, avoid_ch):
-    """Grąžina (route_dict, pastaba). Jei reikia, apvažiuoja Šveicariją."""
+    """Grąžina (route_dict, pastaba, diagnostika). Jei reikia, apvažiuoja Šveicariją."""
     base = route_distance([a, b])
     if not base or not avoid_ch:
-        return base, ""
+        return base, "", ""
     if _in_ch(*a) or _in_ch(*b):
-        return base, ""
-    if ch_km(base["path_coords"]) <= CH_TRANSIT_MIN_KM:
-        return base, ""
+        return base, "", ""
+    base_ch = ch_km(base["path_coords"])
+    if base_ch <= CH_TRANSIT_MIN_KM:
+        return base, "", ""
     best, best_name = None, None
+    diag = [f"tiesiai: {base['distance_km']:.0f} km, per CH {base_ch:.0f} km"]
     for name, via in AVOID_CH_VIA:
-        r = route_distance([a, via, b])
-        if r and ch_km(r["path_coords"]) <= CH_TRANSIT_MIN_KM:
-            if best is None or r["distance_km"] < best["distance_km"]:
-                best, best_name = r, name
+        r = _route_via(a, via, b)
+        if not r:
+            diag.append(f"{name}: Azure negrąžino maršruto")
+            continue
+        r_ch = ch_km(r["path_coords"])
+        diag.append(f"{name}: {r['distance_km']:.0f} km, per CH {r_ch:.0f} km")
+        if r_ch <= CH_TRANSIT_MIN_KM and (best is None or r["distance_km"] < best["distance_km"]):
+            best, best_name = r, name
     if best:
-        return best, f"per {best_name} (vengiant CH, trumpiausias {base['distance_km']:.0f} km)"
-    return base, "⚠️ per Šveicariją – apvažiavimo rasti nepavyko"
+        return best, f"per {best_name} (tiesiai per CH būtų {base['distance_km']:.0f} km)", " | ".join(diag)
+    return base, "⚠️ per Šveicariją – apvažiavimo rasti nepavyko", " | ".join(diag)
 
 
 # ─────────────────────────────────────────────
@@ -297,8 +316,9 @@ with col_compare:
     avoid_ch = st.checkbox(
         "Vengti Šveicarijos tranzito",
         value=True,
-        help="Jei atkarpa prasideda ir baigiasi ne Šveicarijoje, maršrutas apvažiuoja ją "
-             "(per Brenerį / Monblaną / Frejus – trumpiausią variantą).",
+        help="Tikrinama kiekviena atkarpa tarp dviejų stotelių atskirai. Pvz. Riddes (CH) → Novi Ligure (IT) → "
+             "Erlensee (DE): pirma atkarpa prasideda Šveicarijoje, todėl nekeičiama; antra (IT → DE) "
+             "nukreipiama aplink Šveicariją (per Brenerį / Monblaną / Frejus – trumpiausią variantą).",
     )
     calculate = st.button("🧮 Skaičiuoti", type="primary", width="stretch")
 
@@ -348,13 +368,15 @@ def run_calculation(addresses, avoid_ch):
         return {"error": "Nepakanka rastų adresų maršrutui skaičiuoti.", "failed": failed}
 
     st.markdown("#### 🛣️ Skaičiuojami atstumai...")
-    rows, paths = [], []
+    rows, paths, diagnostics = [], [], []
     cumulative = 0.0
     seg_progress = st.progress(0)
     for i, (addr, coord) in enumerate(valid_pairs):
-        seg_km, note = None, ""
+        seg_km, note, diag = None, "", ""
         if i < len(valid_pairs) - 1:
-            route, note = segment_route(coord, valid_pairs[i + 1][1], avoid_ch)
+            route, note, diag = segment_route(coord, valid_pairs[i + 1][1], avoid_ch)
+            if diag:
+                diagnostics.append(f"{i + 1}→{i + 2}: {diag}")
             if route:
                 seg_km = route["distance_km"]
                 paths.append(route["path_coords"])
@@ -380,6 +402,7 @@ def run_calculation(addresses, avoid_ch):
         "total_km": round(cumulative, 1),
         "failed": failed,
         "addresses": addresses,
+        "diagnostics": diagnostics,
     }
 
 
@@ -403,6 +426,10 @@ if result:
     else:
         st.markdown("### 📊 Rezultatai")
         st.dataframe(pd.DataFrame(result["rows"]), hide_index=True, width="stretch")
+        if result.get("diagnostics"):
+            with st.expander("🔎 Šveicarijos apvažiavimo patikra"):
+                for line in result["diagnostics"]:
+                    st.text(line)
 
         total_km = result["total_km"]
         mc1, mc2, mc3 = st.columns(3)
