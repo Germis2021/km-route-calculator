@@ -201,12 +201,19 @@ CH_POLYGON = [
 ]
 CH_TRANSIT_MIN_KM = 20
 
-# Kandidatai apvažiavimui; pasirenkamas trumpiausias, kuris nekerta Šveicarijos
+# Kandidatai apvažiavimui; pasirenkamas trumpiausias, kuris nekerta Šveicarijos.
+# Taškas nustatomas per geocoding (adresas), o koordinatės – tik atsarginis variantas.
 AVOID_CH_VIA = [
-    ("Brenerį", (47.0025, 11.5058)),
-    ("Monblano tunelį", (45.8580, 6.8870)),
-    ("Frejus tunelį", (45.1140, 6.6840)),
+    ("Brenerį", "6156 Gries am Brenner, Austria", (47.0370, 11.4820)),
+    ("Monblano tunelį", "74400 Chamonix-Mont-Blanc, France", (45.9237, 6.8694)),
+    ("Frejus tunelį", "73500 Modane, France", (45.2000, 6.6700)),
 ]
+
+
+@st.cache_data(ttl=7 * 24 * 3600, show_spinner=False)
+def _via_point(address: str, fallback: tuple) -> tuple:
+    found = geocode(address)
+    return tuple(found) if found else fallback
 
 
 def _in_ch(lat, lon):
@@ -264,8 +271,8 @@ def segment_route(a, b, avoid_ch):
         return base, "", ""
     best, best_name = None, None
     diag = [f"tiesiai: {base['distance_km']:.0f} km, per CH {base_ch:.0f} km"]
-    for name, via in AVOID_CH_VIA:
-        r = _route_via(a, via, b)
+    for name, via_addr, fallback in AVOID_CH_VIA:
+        r = _route_via(a, _via_point(via_addr, fallback), b)
         if not r:
             diag.append(f"{name}: Azure negrąžino maršruto")
             continue
